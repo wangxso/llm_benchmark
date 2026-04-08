@@ -1,0 +1,57 @@
+# LLM Benchmark Configuration
+
+# vLLM Server Configuration
+vllm:
+  host: "0.0.0.0"
+  port: 8000
+  model: "Qwen/Qwen2.5-7B-Instruct"
+  tensor_parallel: 1
+  gpu_memory_utilization: 0.9
+
+# Scenario Configuration
+scenario:
+  name: "default-benchmark"
+  models:
+    - name: "Qwen2.5-7B-Instruct"
+      backend: "vllm"
+
+# Load Configuration
+load:
+  type: "fixed"              # fixed | step | burst | streaming | long_context
+  base_concurrency: 100
+  step_increment: 100
+  step_duration: 60
+  max_concurrency: 1000
+  duration: 300             # seconds
+  warmup_duration: 10       # seconds
+
+# Dataset Configuration
+dataset:
+  mode: "generate"           # import | generate | mixed
+  import:
+    path: "./datasets/prompts.jsonl"
+    format: "jsonl"
+  generate:
+    short_ratio: 0.7
+    long_ratio: 0.3
+    max_input_len: 4096
+    max_output_len: 2048
+
+# Request Configuration
+request:
+  stream: false
+  temperature: 0.7
+  max_tokens: 1024
+  timeout: 120
+
+# Metrics Configuration
+metrics:
+  enabled: true
+  collection_interval: 1    # seconds
+  percentiles: [50, 90, 99]
+
+# Output Configuration
+output:
+  format: "json"
+  path: "./results"
+  filename_pattern: "{scenario}_{timestamp}"
