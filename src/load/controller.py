@@ -61,7 +61,10 @@ class TrafficController:
         )
 
         try:
-            response = await client.send_request(request, timeout=self.timeout)
+            if request.get("stream"):
+                response = await self._send_streaming_request(client, request)
+            else:
+                response = await client.send_request(request, timeout=self.timeout)
 
             result.end_time = time.time()
             result.success = True
@@ -69,7 +72,8 @@ class TrafficController:
 
             if request.get("stream"):
                 result.first_token_time = response.get("first_token_time", 0)
-                result.ttft = (result.first_token_time - result.start_time) * 1000
+                if result.first_token_time:
+                    result.ttft = (result.first_token_time - result.start_time) * 1000
                 result.output_tokens = response.get("tokens", 0)
 
                 if result.output_tokens > 1:
@@ -97,6 +101,26 @@ class TrafficController:
 
         self._results.append(result)
         return result
+
+    async def _send_streaming_request(self, client, request: Dict) -> Dict[str, Any]:
+        """Send a streaming request and aggregate stream metrics"""
+        first_token_time = 0
+        token_count = 0
+        content_parts = []
+
+        async for chunk in client.send_request_stream(request.copy()):
+            if not first_token_time and chunk.get("first_token_time"):
+                first_token_time = chunk["first_token_time"]
+            token_count = chunk.get("tokens", token_count)
+            if chunk.get("content"):
+                content_parts.append(chunk["content"])
+
+        return {
+            "content": "".join(content_parts),
+            "tokens": token_count,
+            "input_tokens": 0,
+            "first_token_time": first_token_time,
+        }
 
     async def _run_fixed(
         self, scenario: LoadScenario, generator, client
@@ -299,9 +323,28 @@ class TrafficController:
         index = min(index, len(sorted_list) - 1)
         return sorted_list[index]
 
-    def get_results(self) -> List[RequestResult]:
-        """Get all results"""
-        return self._results
+    def _result_to_dict(self, result: RequestResult) -> Dict[str, Any]:
+        return {
+            "request_id": result.request_id,
+            "start_time": result.start_time,
+            "end_time": result.end_time,
+            "success": result.success,
+            "error": result.error,
+            "ttft": result.ttft,
+            "tpot": result.tpot,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "first_token_time": result.first_token_time,
+            "total_latency": result.total_latency,
+        }
+
+    def get_results_live(self) -> List[Dict]:
+        """Get live results view for metrics collection"""
+        return [self._result_to_dict(r) for r in self._results]
+
+    def get_results(self) -> List[Dict]:
+        """Get all results as dicts"""
+        return [self._result_to_dict(r) for r in self._results]
 
     def reset(self):
         """Reset controller state"""

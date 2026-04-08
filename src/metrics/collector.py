@@ -1,7 +1,6 @@
 import time
 import threading
-import asyncio
-from typing import Dict, Any, List, Optional
+from typing import Callable, Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from collections import deque
 
@@ -41,24 +40,16 @@ class MetricsCollector:
         self._running = False
         self._thread: Optional[threading.Thread] = None
 
-        self._request_count = 0
-        self._success_count = 0
-        self._error_count = 0
-        self._total_tokens = 0
-
-        self._latencies: List[float] = []
-        self._ttfts: List[float] = []
-        self._tpots: List[float] = []
-
-        self._current_qps = 0
-        self._current_tps = 0
-        self._active_requests = 0
+        self._results: List[Dict] = []
+        self._results_provider: Optional[Callable[[], List[Dict]]] = None
+        self._start_time: float = 0
 
     def start(self):
         """Start metrics collection"""
         if not self.enabled:
             return
 
+        self._start_time = time.time()
         self._running = True
         self._thread = threading.Thread(target=self._collect_loop, daemon=True)
         self._thread.start()
@@ -68,6 +59,15 @@ class MetricsCollector:
         self._running = False
         if self._thread:
             self._thread.join(timeout=5)
+
+    def set_results(self, results: List[Dict] | Callable[[], List[Dict]]):
+        """Set results or live results provider for time-series computation"""
+        if callable(results):
+            self._results_provider = results
+            self._results = []
+        else:
+            self._results_provider = None
+            self._results = results
 
     def _collect_loop(self):
         """Main collection loop"""
@@ -81,32 +81,56 @@ class MetricsCollector:
             time.sleep(self.interval)
 
     def _collect(self) -> MetricsSnapshot:
-        """Collect current metrics"""
+        """Collect current metrics from results"""
         import requests
 
         snapshot = MetricsSnapshot(timestamp=time.time())
 
-        snapshot.qps = self._current_qps
-        snapshot.tps = self._current_tps
-        snapshot.active_requests = self._active_requests
+        results = self._results_provider() if self._results_provider else self._results
+        if not results:
+            return snapshot
 
-        if self._latencies:
-            sorted_latencies = sorted(self._latencies)
-            snapshot.avg_latency = sum(self._latencies) / len(self._latencies)
-            snapshot.p50_latency = self._percentile(sorted_latencies, 50)
-            snapshot.p90_latency = self._percentile(sorted_latencies, 90)
-            snapshot.p99_latency = self._percentile(sorted_latencies, 99)
+        current_time = time.time()
+        elapsed = current_time - self._start_time
+        window = 1.0
 
-        if self._ttfts:
-            snapshot.ttft = sum(self._ttfts) / len(self._ttfts)
+        recent_results = [
+            r for r in results if current_time - r.get("end_time", 0) <= window
+        ]
 
-        if self._tpots:
-            snapshot.tpot = sum(self._tpots) / len(self._tpots)
+        if recent_results and elapsed > 0.5:
+            successful = [r for r in recent_results if r.get("success", False)]
+            total_tokens = sum(r.get("output_tokens", 0) for r in successful)
+            latencies = [r.get("total_latency", 0) for r in successful]
+            ttfts = [r.get("ttft", 0) for r in successful if r.get("ttft", 0) > 0]
+            tpots = [r.get("tpot", 0) for r in successful if r.get("tpot", 0) > 0]
 
-        total = self._success_count + self._error_count
-        if total > 0:
-            snapshot.success_rate = self._success_count / total
-            snapshot.error_rate = self._error_count / total
+            snapshot.qps = len(successful) / window if window > 0 else 0
+            snapshot.tps = total_tokens / window if window > 0 else 0
+            snapshot.active_requests = len(recent_results)
+
+            if latencies:
+                sorted_lat = sorted(latencies)
+                snapshot.avg_latency = sum(latencies) / len(latencies)
+                snapshot.p50_latency = self._percentile(sorted_lat, 50)
+                snapshot.p90_latency = self._percentile(sorted_lat, 90)
+                snapshot.p99_latency = self._percentile(sorted_lat, 99)
+
+            if ttfts:
+                snapshot.ttft = sum(ttfts) / len(ttfts)
+            if tpots:
+                snapshot.tpot = sum(tpots) / len(tpots)
+
+        all_results = [
+            r for r in results if r.get("start_time", 0) >= self._start_time
+        ]
+        if all_results:
+            successful = [r for r in all_results if r.get("success", False)]
+            failed = [r for r in all_results if not r.get("success", False)]
+            total = len(all_results)
+            if total > 0:
+                snapshot.success_rate = len(successful) / total
+                snapshot.error_rate = len(failed) / total
 
         try:
             response = requests.get(
@@ -131,7 +155,8 @@ class MetricsCollector:
 
             if " " in line:
                 parts = line.split(" ", 1)
-                name = parts[0]
+                raw_name = parts[0]
+                name = raw_name.split("{", 1)[0]
                 value = parts[1] if len(parts) > 1 else "0"
 
                 try:
@@ -149,41 +174,6 @@ class MetricsCollector:
         index = int(len(sorted_list) * percentile / 100)
         index = min(index, len(sorted_list) - 1)
         return sorted_list[index]
-
-    def record_request(
-        self,
-        latency: float,
-        ttft: float = 0,
-        tpot: float = 0,
-        tokens: int = 0,
-        success: bool = True,
-    ):
-        """Record a completed request"""
-        self._request_count += 1
-
-        if success:
-            self._success_count += 1
-            self._latencies.append(latency)
-            if ttft > 0:
-                self._ttfts.append(ttft)
-            if tpot > 0:
-                self._tpots.append(tpot)
-            self._total_tokens += tokens
-        else:
-            self._error_count += 1
-
-        if len(self._latencies) > 10000:
-            self._latencies = self._latencies[-5000:]
-        if len(self._ttfts) > 10000:
-            self._ttfts = self._ttfts[-5000:]
-        if len(self._tpots) > 10000:
-            self._tpots = self._tpots[-5000:]
-
-    def update_qps(self, qps: float, tps: float, active: int):
-        """Update current QPS/TPS"""
-        self._current_qps = qps
-        self._current_tps = tps
-        self._active_requests = active
 
     def get_metrics(self) -> Dict[str, Any]:
         """Get all collected metrics"""
@@ -204,6 +194,20 @@ class MetricsCollector:
         avg_vllm = {}
         for key, values in vllm_metrics.items():
             avg_vllm[key] = sum(values) / len(values) if values else 0
+
+        total_flops_metric = "vllm:estimated_flops_per_gpu_total"
+        total_flops_values = vllm_metrics.get(total_flops_metric, [])
+        gpu_count = self.config.get("vllm", {}).get("tensor_parallel", 1)
+        if total_flops_values and len(snapshots) >= 2:
+            window_seconds = snapshots[-1].timestamp - snapshots[0].timestamp
+            if window_seconds > 0:
+                total_flops = max(total_flops_values)
+                actual_flops_per_second = (total_flops / window_seconds) * gpu_count
+                avg_vllm[total_flops_metric] = total_flops
+                avg_vllm["vllm:actual_flops_per_second"] = actual_flops_per_second
+                avg_vllm["vllm:actual_tflops_per_second"] = (
+                    actual_flops_per_second / 1e12
+                )
 
         return {
             "snapshots": [

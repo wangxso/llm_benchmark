@@ -195,7 +195,8 @@ class OpenAIClient:
 
             if " " in line:
                 parts = line.split(" ", 1)
-                metric_name = parts[0]
+                raw_name = parts[0]
+                metric_name = raw_name.split("{", 1)[0]
                 metric_value = parts[1] if len(parts) > 1 else ""
 
                 try:

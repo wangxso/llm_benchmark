@@ -6,7 +6,8 @@ vllm:
   port: 8000
   model: "./models/Qwen3.5-0.8B"
   tensor_parallel: 1
-  gpu_memory_utilization: 0.9
+  gpu_memory_utilization: 0.85
+  # MFU metrics require vLLM >= 0.18.0 and --enable-mfu-metrics
 
 # Scenario Configuration
 scenario:
@@ -29,17 +30,20 @@ load:
 dataset:
   mode: "generate"           # import | generate | mixed
   import:
-    path: "./datasets/prompts.jsonl"
-    format: "jsonl"
+    path: "./datasets/historical_multi_turn.json"
+    format: "json"          # json | jsonl | csv
+    text_field: "instruction"     # e.g. instruction
+    type_field: "type"
+    max_tokens_field: "max_tokens"
   generate:
-    short_ratio: 0.7
-    long_ratio: 0.3
-    max_input_len: 4096
-    max_output_len: 2048
+    short_ratio: 0.6
+    long_ratio: 0.4
+    max_input_len: 512
+    max_output_len: 512
 
 # Request Configuration
 request:
-  stream: false
+  stream: true
   temperature: 0.7
   max_tokens: 1024
   timeout: 120

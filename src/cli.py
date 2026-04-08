@@ -66,6 +66,25 @@ def run(**kwargs):
     click.echo(f"[Benchmark] Starting test: {scenario_name}")
     click.echo(f"[Config] Concurrency: {concurrency}")
     click.echo(f"[Config] Duration: {duration}s")
+    click.echo(
+        f"[Config] Dataset mode: {config.get('dataset', {}).get('mode', 'generate')}"
+    )
+    click.echo(
+        f"[Config] Dataset path: {config.get('dataset', {}).get('import', {}).get('path', '-') }"
+    )
+    click.echo(
+        f"[Config] Dataset text field: {config.get('dataset', {}).get('import', {}).get('text_field', 'prompt')}"
+    )
+    click.echo(
+        f"[Config] Request max_tokens: {config.get('request', {}).get('max_tokens', 1024)}"
+    )
+    click.echo(
+        f"[Config] Dataset max_output_len: {config.get('dataset', {}).get('generate', {}).get('max_output_len', 2048)}"
+    )
+    click.echo(
+        f"[Config] Dataset max_input_len: {config.get('dataset', {}).get('generate', {}).get('max_input_len', 4096)}"
+    )
+    click.echo(f"[Config] Stream: {config.get('request', {}).get('stream', False)}")
 
     manager = ScenarioManager(config)
     generator = LoadGenerator(config)
@@ -77,6 +96,7 @@ def run(**kwargs):
     click.echo("[Info] Initializing test scenario...")
     scenario = generator.create_scenario()
 
+    collector.set_results(controller.get_results_live)
     click.echo("[Info] Starting metrics collection...")
     collector.start()
 
@@ -174,6 +194,11 @@ def merge_cli_config(config, cli_args):
         config.setdefault("load", {})["peak_concurrency"] = cli_args["peak"]
     if cli_args.get("warmup"):
         config.setdefault("load", {})["warmup_duration"] = cli_args["warmup"]
+    if cli_args.get("dataset"):
+        config.setdefault("dataset", {})["mode"] = "import"
+        config.setdefault("dataset", {}).setdefault("import", {})["path"] = cli_args[
+            "dataset"
+        ]
     if cli_args.get("stream"):
         config.setdefault("request", {})["stream"] = True
     if cli_args.get("output_len"):
@@ -215,12 +240,18 @@ def print_summary(report):
     vllm_metrics = report.get("vllm_metrics", {})
     if vllm_metrics:
         click.echo(f"\n[vLLM Metrics]")
-        click.echo(f"  Avg Batch:    {vllm_metrics.get('avg_batch_size', 0):.1f}")
+        click.echo(f"  Avg Batch:    {vllm_metrics.get('batch_size', 0):.1f}")
         click.echo(
             f"  KV Cache:     {vllm_metrics.get('kv_cache_usage', 0) * 100:.1f}%"
         )
         click.echo(
             f"  GPU Util:     {vllm_metrics.get('gpu_utilization', 0) * 100:.1f}%"
+        )
+        click.echo(
+            f"  Actual FLOPs: {vllm_metrics.get('actual_flops_per_second', 0):.3e} FLOPs/s"
+        )
+        click.echo(
+            f"  Actual TFLOPs:{vllm_metrics.get('actual_tflops_per_second', 0):.6f} TFLOPs/s"
         )
 
     click.echo("=" * 50 + "\n")

@@ -89,6 +89,9 @@ class DatasetManager:
         self.long_ratio = self.generate_config.get("long_ratio", 0.3)
         self.max_input_len = self.generate_config.get("max_input_len", 4096)
         self.max_output_len = self.generate_config.get("max_output_len", 2048)
+        self.text_field = self.import_config.get("text_field", "prompt")
+        self.type_field = self.import_config.get("type_field", "type")
+        self.max_tokens_field = self.import_config.get("max_tokens_field", "max_tokens")
 
         self._prompts = []
         self._load_or_generate()
@@ -110,7 +113,7 @@ class DatasetManager:
             self._prompts = self.generate_synthetic(1000)
 
     def load_imported(self, path: str) -> List[Prompt]:
-        """Load prompts from JSONL/CSV file"""
+        """Load prompts from JSON/JSONL/CSV file"""
         path = Path(path)
 
         if not path.exists():
@@ -118,28 +121,56 @@ class DatasetManager:
 
         prompts = []
 
-        if path.suffix == ".jsonl":
+        if path.suffix == ".json":
+            with open(path, "r") as f:
+                data = json.load(f)
+
+            if not isinstance(data, list):
+                raise ValueError("JSON dataset must be a list of objects")
+
+            for item in data:
+                prompt = self._build_prompt(item)
+                if prompt:
+                    prompts.append(prompt)
+
+        elif path.suffix == ".jsonl":
             with open(path, "r") as f:
                 for line in f:
-                    data = json.loads(line.strip())
-                    text = data.get("prompt", data.get("text", ""))
-                    prompt_type = data.get("type", "short")
-                    max_tokens = data.get("max_tokens", self.max_output_len)
-                    prompts.append(Prompt(text, prompt_type, max_tokens))
+                    line = line.strip()
+                    if not line:
+                        continue
+                    data = json.loads(line)
+                    prompt = self._build_prompt(data)
+                    if prompt:
+                        prompts.append(prompt)
 
         elif path.suffix == ".csv":
             with open(path, "r") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    text = row.get("prompt", row.get("text", ""))
-                    prompt_type = row.get("type", "short")
-                    max_tokens = int(row.get("max_tokens", self.max_output_len))
-                    prompts.append(Prompt(text, prompt_type, max_tokens))
+                    prompt = self._build_prompt(row)
+                    if prompt:
+                        prompts.append(prompt)
 
         else:
             raise ValueError(f"Unsupported format: {path.suffix}")
 
         return prompts
+
+    def _build_prompt(self, data: Dict[str, Any]) -> Prompt | None:
+        text = data.get(self.text_field)
+        if text is None:
+            text = data.get("prompt", data.get("text", data.get("instruction", "")))
+
+        if not text:
+            return None
+
+        prompt_type = data.get(self.type_field, data.get("type", "short"))
+        max_tokens = data.get(
+            self.max_tokens_field, data.get("max_tokens", self.max_output_len)
+        )
+
+        return Prompt(str(text), str(prompt_type), int(max_tokens))
 
     def generate_synthetic(self, count: int) -> List[Prompt]:
         """Generate synthetic prompts"""

@@ -70,12 +70,16 @@ class ReportGenerator:
             "vllm:num_requests_waiting": "waiting_requests",
             "vllm:batch_size": "batch_size",
             "vllm:kv_cache_usage": "kv_cache_usage",
+            "vllm:kv_cache_usage_perc": "kv_cache_usage",
             "vllm:prefill_latency": "prefill_latency_ms",
             "vllm:decode_latency": "decode_latency_ms",
             "vllm:gpu_utilization": "gpu_utilization",
             "vllm:token_issues_per_second": "token_ips",
             "vllm:num_prefill_tokens": "prefill_tokens",
             "vllm:num_decode_tokens": "decode_tokens",
+            "vllm:estimated_flops_per_gpu_total": "estimated_flops_per_gpu_total",
+            "vllm:actual_flops_per_second": "actual_flops_per_second",
+            "vllm:actual_tflops_per_second": "actual_tflops_per_second",
         }
 
         for metric_name, display_name in key_mapping.items():

@@ -47,7 +47,8 @@ class VLLMExporter:
 
             parts = line.split()
             if len(parts) >= 2:
-                name = parts[0]
+                raw_name = parts[0]
+                name = raw_name.split("{", 1)[0]
                 try:
                     value = float(parts[1])
                     metrics[name] = value
