@@ -5,7 +5,7 @@
 ## 功能特性
 
 - **多模式压测**: 固定并发、阶梯升压、突发洪峰、长上下文、流式响应
-- **数据集管理**: 支持导入（JSONL/CSV）和泛化生成两种模式
+- **数据集管理**: 支持导入（JSON/JSONL/CSV）和泛化生成两种模式，可指定文本字段如 `instruction`
 - **全链路指标**: QPS、TPS、TTFT、TPOT、P50/P90/P99 时延
 - **vLLM 集成**: 自动采集内部指标（batch size、KV Cache、GPU 利用率）
 - **报告生成**: JSON 格式输出，包含瓶颈分析
@@ -45,6 +45,9 @@ python bench.py run --vllm-host localhost --scenario long_context \
 
 # 流式响应压测
 python bench.py run --vllm-host localhost --concurrency 50 --stream
+
+# 使用配置文件导入 JSON 数据集，并读取 instruction 字段
+python bench.py run --config config/default.yaml --vllm-host localhost --concurrency 50 --stream
 ```
 
 ## 命令行参数
@@ -106,16 +109,63 @@ load:
   warmup_duration: 10
 
 dataset:
-  mode: "generate"
+  mode: "import"
+  import:
+    path: "./datasets/historical_multi_turn.json"
+    format: "json"
+    text_field: "instruction"
+    type_field: "type"
+    max_tokens_field: "max_tokens"
   generate:
-    short_ratio: 0.7
-    long_ratio: 0.3
-    max_input_len: 4096
-    max_output_len: 2048
+    short_ratio: 0.6
+    long_ratio: 0.4
+    max_input_len: 512
+    max_output_len: 512
+
+request:
+  stream: true
+  max_tokens: 512
 
 output:
   path: "./results"
 ```
+
+### 导入数据集说明
+
+当前支持以下格式：
+- `json`: 顶层必须是对象数组
+- `jsonl`: 每行一个 JSON 对象
+- `csv`: 表头列名映射字段
+
+导入配置支持这些字段：
+- `path`: 数据集路径
+- `format`: `json` | `jsonl` | `csv`
+- `text_field`: 文本字段名，例如 `instruction`
+- `type_field`: 请求类型字段名，默认 `type`
+- `max_tokens_field`: 单条样本输出长度字段名，默认 `max_tokens`
+
+如果样本里没有 `max_tokens_field`，会回退到配置中的 `dataset.generate.max_output_len`。
+如果运行时又传了 `--output-len`，则会覆盖 `request.max_tokens`，但不会覆盖样本里显式提供的 `max_tokens`。
+
+### MFU / FLOPs 指标说明
+
+如果你希望 vLLM 暴露 `estimated_flops_per_gpu_total` 等 MFU 指标，需要：
+- vLLM `>= 0.18.0`
+- 启动时加 `--enable-mfu-metrics`
+
+例如：
+
+```bash
+vllm serve ./models/Qwen3.5-0.8B \
+  --dtype auto \
+  --gpu-memory-utilization 0.85 \
+  --enable-mfu-metrics \
+  --max-num-batched-tokens 8192 \
+  --max-model-len 1024 \
+  --max-num-seqs 64
+```
+
+注意：`estimated_flops_per_gpu_created` 不是实际 FLOPs 值，不应直接当作算力使用。
 
 ## 输出指标
 
