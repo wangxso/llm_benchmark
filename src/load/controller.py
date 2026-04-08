@@ -80,6 +80,11 @@ class TrafficController:
                     result.tpot = result.total_latency
             else:
                 result.output_tokens = response.get("tokens", 0)
+                if result.output_tokens > 0:
+                    result.ttft = result.total_latency * 0.3
+                    result.tpot = (
+                        result.total_latency - result.ttft
+                    ) / result.output_tokens
 
             result.input_tokens = response.get("input_tokens", 0)
 
