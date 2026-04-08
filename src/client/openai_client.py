@@ -35,7 +35,7 @@ class OpenAIClient:
 
         url = f"{self.base_url}/chat/completions"
 
-        timeout = timeout or self.timeout
+        timeout_val = timeout or self.timeout
 
         try:
             async with session.post(url, json=request) as response:
@@ -50,9 +50,11 @@ class OpenAIClient:
                 return self._parse_response(result, stream=False)
 
         except asyncio.TimeoutError:
-            raise Exception(f"Request timeout after {timeout}s")
+            raise Exception(f"Request timeout after {timeout_val}s")
         except aiohttp.ClientError as e:
             raise Exception(f"Client error: {e}")
+        except Exception as e:
+            raise Exception(f"Request error: {e}")
 
     async def send_request_stream(self, request: Dict) -> AsyncIterator[Dict[str, Any]]:
         """Send a streaming request"""

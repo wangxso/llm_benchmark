@@ -7,9 +7,9 @@ DEFAULT_CONFIG = {
     "vllm": {
         "host": "localhost",
         "port": 8000,
-        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "model": "./models/Qwen3.5-0.8B",
         "tensor_parallel": 1,
-        "gpu_memory_utilization": 0.9,
+        "gpu_memory_utilization": 0.8,
     },
     "scenario": {
         "name": "default-benchmark",

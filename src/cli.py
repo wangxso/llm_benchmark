@@ -75,7 +75,7 @@ def run(**kwargs):
     report_gen = ReportGenerator(config)
 
     click.echo("[Info] Initializing test scenario...")
-    scenario = manager.create_scenario()
+    scenario = generator.create_scenario()
 
     click.echo("[Info] Starting metrics collection...")
     collector.start()
@@ -85,6 +85,10 @@ def run(**kwargs):
 
     click.echo("[Info] Stopping metrics collection...")
     collector.stop()
+
+    import asyncio
+
+    asyncio.run(client.close())
 
     click.echo("[Info] Generating report...")
     report = report_gen.generate(results, collector.get_metrics())

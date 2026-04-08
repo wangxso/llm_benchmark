@@ -80,9 +80,7 @@ class LoadGenerator:
             prompt = self.dataset.get_prompt()
 
         request = {
-            "model": self.config.get("vllm", {}).get(
-                "model", "Qwen/Qwen2.5-7B-Instruct"
-            ),
+            "model": self.config.get("vllm", {}).get("model", "./models/Qwen3.5-0.8B"),
             "messages": [{"role": "user", "content": prompt.text}],
             "temperature": self.temperature,
             "max_tokens": prompt.max_tokens or self.max_tokens,

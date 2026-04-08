@@ -106,13 +106,13 @@ class TrafficController:
             await asyncio.sleep(warmup)
 
         start_time = time.time()
-        active_tasks = []
+        active_tasks = set()
 
         while time.time() - start_time < duration:
             while len(active_tasks) < scenario.concurrency:
                 request = generator.generate_request()
                 task = asyncio.create_task(self._send_request(client, request))
-                active_tasks.append(task)
+                active_tasks.add(task)
                 self._request_count += 1
 
             done, active_tasks = await asyncio.wait(
@@ -146,13 +146,13 @@ class TrafficController:
             print(f"[Step] Level {step_count + 1}: concurrency={current_concurrency}")
 
             start_time = time.time()
-            active_tasks = []
+            active_tasks = set()
 
             while time.time() - start_time < scenario.step_duration:
                 while len(active_tasks) < current_concurrency:
                     request = generator.generate_request()
                     task = asyncio.create_task(self._send_request(client, request))
-                    active_tasks.append(task)
+                    active_tasks.add(task)
                     self._request_count += 1
 
                 done, active_tasks = await asyncio.wait(
@@ -182,14 +182,14 @@ class TrafficController:
         if warmup > 0:
             await asyncio.sleep(warmup)
 
-        active_tasks = []
+        active_tasks = set()
 
         print(f"[Burst] Launching {scenario.peak_concurrency} concurrent requests")
 
         for _ in range(scenario.peak_concurrency):
             request = generator.generate_request()
             task = asyncio.create_task(self._send_request(client, request))
-            active_tasks.append(task)
+            active_tasks.add(task)
             self._request_count += 1
 
         print(f"[Burst] Waiting for completion...")

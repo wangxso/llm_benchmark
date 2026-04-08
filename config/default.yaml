@@ -4,7 +4,7 @@
 vllm:
   host: "0.0.0.0"
   port: 8000
-  model: "Qwen/Qwen2.5-7B-Instruct"
+  model: "./models/Qwen3.5-0.8B"
   tensor_parallel: 1
   gpu_memory_utilization: 0.9
 
@@ -12,7 +12,7 @@ vllm:
 scenario:
   name: "default-benchmark"
   models:
-    - name: "Qwen2.5-7B-Instruct"
+    - name: "./models/Qwen3.5-0.8B"
       backend: "vllm"
 
 # Load Configuration
