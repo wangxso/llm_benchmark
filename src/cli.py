@@ -47,6 +47,7 @@ def cli():
 @click.option("--output", "-o", type=click.Path(), help="Output file path")
 @click.option("--vllm-host", type=str, help="vLLM host")
 @click.option("--vllm-port", type=int, help="vLLM port")
+@click.option("--model", type=str, help="Model name to use in requests")
 def run(**kwargs):
     """Run benchmark test"""
     config = load_config(kwargs.get("config"))
@@ -62,8 +63,11 @@ def run(**kwargs):
     scenario_name = config.get("scenario", {}).get("name", "unnamed")
     concurrency = config.get("load", {}).get("base_concurrency", 100)
     duration = config.get("load", {}).get("duration", 300)
+    model_name = config.get("vllm", {}).get("model", "unknown")
 
     click.echo(f"[Benchmark] Starting test: {scenario_name}")
+    click.echo(f"[Config] Model: {model_name}")
+    click.echo(f"[Config] Target: {config.get('vllm', {}).get('host')}:{config.get('vllm', {}).get('port')}")
     click.echo(f"[Config] Concurrency: {concurrency}")
     click.echo(f"[Config] Duration: {duration}s")
     click.echo(
@@ -207,6 +211,8 @@ def merge_cli_config(config, cli_args):
         config.setdefault("vllm", {})["host"] = cli_args["vllm_host"]
     if cli_args.get("vllm_port"):
         config.setdefault("vllm", {})["port"] = cli_args["vllm_port"]
+    if cli_args.get("model"):
+        config.setdefault("vllm", {})["model"] = cli_args["model"]
     if cli_args.get("short_ratio"):
         config.setdefault("dataset", {})["short_ratio"] = cli_args["short_ratio"]
     if cli_args.get("long_ratio"):

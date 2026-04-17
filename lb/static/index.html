@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>vLLM Load Balancer</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>🚀 vLLM Load Balancer</h1>
+        <div class="actions">
+          <button id="refreshBtn">🔄 Refresh</button>
+          <button id="reloadBtn">📋 Reload</button>
+          <span id="lastUpdate" class="hint"></span>
+        </div>
+      </header>
+
+      <section class="summary-grid" id="summary"></section>
+
+      <section class="charts-row">
+        <div class="chart-container">
+          <h3>📈 QPS</h3>
+          <div id="throughputChart" class="chart"></div>
+        </div>
+        <div class="chart-container">
+          <h3>⏱️ Latency</h3>
+          <div id="latencyChart" class="chart"></div>
+        </div>
+        <div class="chart-container">
+          <h3>🔢 Token Throughput (K)</h3>
+          <div id="tokenChart" class="chart"></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>🖥️ Instances</h2>
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Model</th>
+                <th>Endpoint</th>
+                <th>PID</th>
+                <th>Inflight</th>
+                <th>Queue</th>
+                <th>Running</th>
+                <th>GPU</th>
+                <th>KV Cache</th>
+                <th>Prefill</th>
+                <th>Decode</th>
+                <th>Act</th>
+              </tr>
+            </thead>
+            <tbody id="instanceTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="charts-row" id="instanceCharts"></section>
+
+      <section>
+        <h2>⚙️ Config</h2>
+        <textarea id="configText" spellcheck="false"></textarea>
+        <div class="actions" style="margin-top:8px">
+          <button id="saveConfigBtn">💾 Save & Apply</button>
+        </div>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

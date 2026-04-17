@@ -1,0 +1,47 @@
+server:
+  host: "0.0.0.0"
+  port: 9000
+  admin_token: null
+  request_timeout: 180
+
+scheduler:
+  strategy: "least_load"
+  refresh_interval: 2
+  queue_weight: 2.0
+  inflight_weight: 1.0
+
+instances:
+  - id: "server0"
+    enabled: true
+    managed: true
+    host: "127.0.0.1"
+    port: 8001
+    # ModelScope 模型 ID，vLLM 会自动下载
+    model: "Qwen/Qwen2.5-0.5B-Instruct"
+    tensor_parallel: 1
+    gpu_ids: "0"
+    gpu_memory_utilization: 0.4
+    max_model_len: 4096
+    enable_mfu_metrics: true
+    extra_args: []
+  - id: "server1"
+    enabled: true
+    managed: true
+    host: "127.0.0.1"
+    port: 8002
+    # ModelScope 模型 ID，vLLM 会自动下载
+    model: "Qwen/Qwen2.5-0.5B-Instruct"
+    tensor_parallel: 1
+    gpu_ids: "0"
+    gpu_memory_utilization: 0.4
+    max_model_len: 4096
+    enable_mfu_metrics: true
+    extra_args: []
+
+ui:
+  enabled: true
+  title: "vLLM Load Balancer"
+
+runtime:
+  log_dir: "./lb/runtime/logs"
+  state_path: "./lb/runtime/state.json"

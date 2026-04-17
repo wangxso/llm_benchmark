@@ -246,6 +246,137 @@ report = report_gen.generate(results, collector.get_metrics())
 report_gen.save(report, "results/benchmark.json")
 ```
 
+## vLLM 多实例负载均衡
+
+`lb/` 目录提供了一个独立的多实例 vLLM 负载均衡子系统，支持：
+
+- **统一 OpenAI 兼容接口**: `/v1/chat/completions`、`/v1/models`
+- **智能调度**: 基于 vLLM 运行队列与等待队列的 least-load 策略
+- **进程管理**: 自动拉起/停止多个 vLLM 实例
+- **Web 控制台**: 实例状态监控、配置编辑、启停操作
+- **流式代理**: 原样透传 SSE 流式响应
+
+### 安装
+
+```bash
+# 1. 安装本工具包（包含 vllm-lb 命令）
+pip install -e .
+
+# 2. 安装 vLLM（如果尚未安装）
+pip install vllm
+
+# 3. 验证安装
+vllm-lb --help
+```
+
+### 快速启动
+
+```bash
+# 启动负载均衡器
+vllm-lb serve --config lb/config/default.yaml
+```
+
+默认监听 `0.0.0.0:9000`，Web UI 在 `http://localhost:9000/`。
+
+**注意**: 
+- 首次启动会自动从 ModelScope 下载模型，请确保网络畅通
+- 根据你的 GPU 数量修改 `lb/config/default.yaml` 中的 `instances` 配置
+- 单 GPU 环境只需保留一个实例配置
+
+### 配置示例
+
+```yaml
+server:
+  host: "0.0.0.0"
+  port: 9000
+  request_timeout: 180
+
+scheduler:
+  strategy: "least_load"
+  refresh_interval: 2
+  queue_weight: 2.0
+  inflight_weight: 1.0
+
+instances:
+  # 单 GPU 配置示例
+  - id: "gpu0"
+    enabled: true
+    managed: true
+    host: "127.0.0.1"
+    port: 8001
+    # ModelScope 模型 ID，vLLM 会自动下载
+    model: "Qwen/Qwen2.5-0.5B-Instruct"
+    gpu_ids: "0"
+    gpu_memory_utilization: 0.80
+    max_model_len: 4096
+    enable_mfu_metrics: true
+    extra_args: []
+
+  # 多 GPU 配置示例（取消注释启用）
+  # - id: "gpu1"
+  #   enabled: true
+  #   managed: true
+  #   host: "127.0.0.1"
+  #   port: 8002
+  #   model: "Qwen/Qwen2.5-0.5B-Instruct"
+  #   gpu_ids: "1"
+  #   gpu_memory_utilization: 0.80
+  #   max_model_len: 4096
+  #   enable_mfu_metrics: true
+    gpu_memory_utilization: 0.85
+    max_model_len: 4096
+    enable_mfu_metrics: true
+```
+
+### API 端点
+
+**对外接口**:
+- `GET /health` - 健康检查
+- `GET /v1/models` - 聚合模型列表
+- `POST /v1/chat/completions` - 聊天完成（支持流式）
+
+**管理接口**:
+- `GET /admin/state` - 完整状态
+- `GET /admin/metrics` - 代理指标
+- `GET /admin/config` - 当前配置
+- `PUT /admin/config` - 更新配置
+- `POST /admin/reload` - 重新加载配置
+- `POST /admin/instances/{id}/start` - 启动实例
+- `POST /admin/instances/{id}/stop` - 停止实例
+
+### 调用示例
+
+```bash
+# 查看可用模型
+curl http://localhost:9000/v1/models
+
+# 非流式请求（不指定模型会自动选择）
+curl -X POST http://localhost:9000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "Hello"}],
+    "max_tokens": 100
+  }'
+
+# 流式请求（指定模型）
+curl -X POST http://localhost:9000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "stream": true,
+    "max_tokens": 100
+  }'
+```
+
+### 与现有压测联调
+
+负载均衡器对下游工具透明，可直接作为 `bench.py` 的目标：
+
+```bash
+python bench.py run --vllm-host 127.0.0.1 --vllm-port 9000 --concurrency 50 --duration 60
+```
+
 ## License
 
 MIT

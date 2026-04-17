@@ -18,10 +18,11 @@ dependencies = [
 
 [project.scripts]
 bench = "bench:cli"
+vllm-lb = "lb.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
+include = ["src*", "lb*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
