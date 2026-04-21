@@ -18,6 +18,148 @@ def cli():
     pass
 
 
+@cli.command("eval")
+@click.option("--benchmark", "-b", type=str, default="gpqa",
+              help="Benchmark name (gpqa, mmlu-pro, mmlu-redux, super-gpqa, ceval)")
+@click.option("--vllm-host", type=str, help="vLLM server host (for local)")
+@click.option("--vllm-port", type=int, default=8000, help="vLLM server port")
+@click.option("--model", "-m", type=str, help="Model name (required for remote API)")
+@click.option("--samples", "-n", type=int, help="Max number of samples to evaluate")
+@click.option("--subject", type=str, help="Filter by subject")
+@click.option("--prompt-style", type=click.Choice(["zero_shot", "few_shot", "cot", "zero_shot_cn", "few_shot_cn", "cot_cn"]),
+              default="zero_shot", help="Prompt style")
+@click.option("--concurrency", "-c", type=int, default=8, help="Concurrent requests")
+@click.option("--output", "-o", type=str, default="./results", help="Output directory")
+@click.option("--list", "list_benchmarks", is_flag=True, help="List available benchmarks")
+@click.option("--hf-token", type=str, help="HuggingFace token for gated datasets")
+@click.option("--api-base-url", type=str, help="Remote API base URL (e.g., https://api.openai.com/v1)")
+@click.option("--api-key", type=str, help="API key for remote API")
+@click.option("--api-type", type=click.Choice(["openai", "anthropic"]), default="openai",
+              help="API type: openai (default) or anthropic")
+def eval_cmd(**kwargs):
+    """Run benchmark evaluation (GPQA, MMLU-Pro, etc.)
+
+    Examples:
+        # Local vLLM server
+        bench.py eval --benchmark gpqa --vllm-host localhost
+
+        # Remote OpenAI-compatible API
+        bench.py eval --benchmark ceval --api-base-url https://api.openai.com/v1 --api-key sk-xxx --model gpt-4
+
+        # Anthropic API
+        bench.py eval --benchmark gpqa --api-type anthropic --api-key sk-ant-xxx --model claude-3-haiku-20240307
+    """
+    from .eval import get_benchmark, list_benchmarks as get_list, EvalRunner
+
+    if kwargs.get("list_benchmarks"):
+        click.echo("Available benchmarks:")
+        for name in get_list():
+            benchmark_cls = get_benchmark(name)
+            bench = benchmark_cls()
+            click.echo(f"  - {name}: {bench.description}")
+        return
+
+    # Validate: need either vllm-host or api-base-url
+    if not kwargs.get("vllm_host") and not kwargs.get("api_base_url"):
+        click.echo("Error: Either --vllm-host or --api-base-url is required", err=True)
+        click.echo("  Local:  --vllm-host localhost")
+        click.echo("  Remote: --api-base-url https://api.example.com/v1 --api-key YOUR_KEY --model MODEL_NAME")
+        sys.exit(1)
+
+    # For remote API, model is required
+    if kwargs.get("api_base_url") and not kwargs.get("model"):
+        click.echo("Error: --model is required when using --api-base-url", err=True)
+        sys.exit(1)
+
+    benchmark_name = kwargs.get("benchmark", "gpqa")
+
+    try:
+        benchmark_cls = get_benchmark(benchmark_name)
+        benchmark = benchmark_cls()
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    click.echo(f"[Eval] Starting evaluation: {benchmark.name}")
+    click.echo(f"[Eval] Model: {kwargs.get('model', 'auto-detect')}")
+    click.echo(f"[Eval] Prompt style: {kwargs['prompt_style']}")
+    if kwargs.get("api_base_url"):
+        click.echo(f"[Eval] API URL: {kwargs['api_base_url']}")
+        click.echo(f"[Eval] API type: {kwargs.get('api_type', 'openai')}")
+    else:
+        click.echo(f"[Eval] Host: {kwargs['vllm_host']}:{kwargs['vllm_port']}")
+    if kwargs.get("samples"):
+        click.echo(f"[Eval] Max samples: {kwargs['samples']}")
+    if kwargs.get("subject"):
+        click.echo(f"[Eval] Subject: {kwargs['subject']}")
+
+    runner = EvalRunner(
+        benchmark=benchmark,
+        host=kwargs.get("vllm_host", "localhost"),
+        port=kwargs.get("vllm_port", 8000),
+        model=kwargs.get("model"),
+        concurrency=kwargs.get("concurrency", 8),
+        hf_token=kwargs.get("hf_token"),
+        api_base_url=kwargs.get("api_base_url"),
+        api_key=kwargs.get("api_key"),
+        api_type=kwargs.get("api_type", "openai"),
+    )
+
+    report = runner.run(
+        prompt_style=kwargs.get("prompt_style", "zero_shot"),
+        max_samples=kwargs.get("samples"),
+        subject=kwargs.get("subject"),
+        output_dir=kwargs.get("output"),
+    )
+
+    print_eval_summary(report)
+
+
+def print_eval_summary(report):
+    """Print evaluation summary"""
+    click.echo("\n" + "=" * 50)
+    click.echo(f"EVALUATION SUMMARY: {report.get('benchmark', 'Unknown')}")
+    click.echo("=" * 50)
+
+    click.echo(f"\nModel: {report.get('model', 'unknown')}")
+    click.echo(f"Prompt style: {report.get('prompt_style', 'unknown')}")
+    click.echo(f"\nOverall Accuracy: {report.get('overall_accuracy', 0) * 100:.2f}%")
+    click.echo(f"Correct: {report.get('correct', 0)} / {report.get('total_questions', 0)}")
+
+    # Print category breakdown if available
+    categories = report.get("categories", {})
+    if categories:
+        click.echo(f"\n[By Category]")
+        for cat, stats in sorted(categories.items()):
+            if cat != "Average":
+                acc = stats["accuracy"] * 100
+                correct = stats["correct"]
+                total = stats["total"]
+                click.echo(f"  {cat}: {acc:.1f}% ({correct}/{total})")
+        if "Average" in categories:
+            avg = categories["Average"]["accuracy"] * 100
+            click.echo(f"  ---\n  Category Avg: {avg:.1f}%")
+
+    # Print subject breakdown
+    subjects = report.get("subjects", {})
+    if subjects:
+        click.echo(f"\n[By Subject]")
+        # Show top 10 subjects by accuracy
+        sorted_subjects = sorted(subjects.items(), key=lambda x: -x[1]["accuracy"])[:10]
+        for subject, stats in sorted_subjects:
+            acc = stats["accuracy"] * 100
+            correct = stats["correct"]
+            total = stats["total"]
+            click.echo(f"  {subject}: {acc:.1f}% ({correct}/{total})")
+        if len(subjects) > 10:
+            click.echo(f"  ... and {len(subjects) - 10} more subjects")
+
+    if report.get("report_file"):
+        click.echo(f"\nReport saved: {report['report_file']}")
+
+    click.echo("=" * 50 + "\n")
+
+
 @cli.command()
 @click.option("--config", "-c", type=click.Path(exists=True), help="Config file path")
 @click.option("--concurrency", "-n", type=int, help="Fixed concurrency")

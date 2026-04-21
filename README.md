@@ -5,6 +5,7 @@
 ## 功能特性
 
 - **多模式压测**: 固定并发、阶梯升压、突发洪峰、长上下文、流式响应
+- **基准评测**: 支持 GPQA、MMLU-Pro、MMLU-Redux、SuperGPQA 等标准评测集
 - **数据集管理**: 支持导入（JSON/JSONL/CSV）和泛化生成两种模式，可指定文本字段如 `instruction`
 - **全链路指标**: QPS、TPS、TTFT、TPOT、P50/P90/P99 时延
 - **vLLM 集成**: 自动采集内部指标（batch size、KV Cache、GPU 利用率）
@@ -49,6 +50,34 @@ python bench.py run --vllm-host localhost --concurrency 50 --stream
 # 使用配置文件导入 JSON 数据集，并读取 instruction 字段
 python bench.py run --config config/default.yaml --vllm-host localhost --concurrency 50 --stream
 ```
+
+## 基准评测
+
+支持标准评测集评估模型知识能力：
+
+```bash
+# 查看可用评测集
+python bench.py eval --list
+
+# 运行 GPQA 评测
+python bench.py eval --benchmark gpqa --vllm-host localhost --samples 100
+
+# 运行 MMLU-Pro 指定学科
+python bench.py eval --benchmark mmlu-pro --vllm-host localhost --subject math
+
+# 使用 Chain-of-Thought 提示
+python bench.py eval --benchmark gpqa --vllm-host localhost --prompt-style cot
+```
+
+| 评测集 | 说明 |
+|--------|------|
+| GPQA | 研究生级别问答（需 HF 登录） |
+| MMLU-Pro | MMLU 增强版，10 选项 |
+| MMLU-Redux | MMLU 纠错版 |
+| SuperGPQA | 综合研究生级别评测 |
+| C-Eval | 中文综合能力评测，52 学科 |
+
+详细文档见 [src/eval/README.md](src/eval/README.md)。
 
 ## 命令行参数
 
@@ -208,6 +237,11 @@ llm_benchmark/
 │   │   └── vllm_exporter.py    # vLLM 指标
 │   ├── scenario/
 │   │   └── manager.py          # 场景管理
+│   ├── eval/                   # 基准评测模块
+│   │   ├── datasets/           # 评测数据集加载器
+│   │   ├── runner.py           # 评测执行器
+│   │   ├── prompts.py          # Prompt 模板
+│   │   └── scorer.py           # 答案评分
 │   └── report/
 │       └── generator.py        # 报告生成
 └── results/                    # 测试结果输出目录
