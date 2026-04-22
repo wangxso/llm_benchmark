@@ -30,10 +30,20 @@ def render_results_page():
         st.info("No results found. Run some evaluations or load tests first.")
         return
 
-    # Create tabs for List and Detail views
-    tab_list, tab_detail = st.tabs(["📋 Results List", "📊 Result Detail"])
+    # Use session state to control view mode
+    if 'selected_result' not in st.session_state:
+        st.session_state['selected_result'] = None
 
-    with tab_list:
+    # If a result is selected, show detail view; otherwise show list view
+    if st.session_state['selected_result']:
+        # Show detail view with back button
+        if st.button("⬅️ Back to List", key="back_to_list"):
+            st.session_state['selected_result'] = None
+            st.rerun()
+
+        show_result_detail(st.session_state['selected_result'])
+    else:
+        # Show list view
         # Filter by type
         col1, col2 = st.columns([1, 3])
 
@@ -71,17 +81,6 @@ def render_results_page():
                 if st.button("📊 View", key=f"view_{file_info['path']}"):
                     st.session_state['selected_result'] = file_info['path']
                     st.rerun()
-
-    with tab_detail:
-        if 'selected_result' in st.session_state and st.session_state['selected_result']:
-            # Clear button
-            if st.button("⬅️ Back to List"):
-                st.session_state['selected_result'] = None
-                st.rerun()
-
-            show_result_detail(st.session_state['selected_result'])
-        else:
-            st.info("👈 Select a result from the 'Results List' tab to view details")
 
 
 def scan_results(results_dir: str) -> List[Dict]:
