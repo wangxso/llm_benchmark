@@ -6,9 +6,12 @@ import time
 from pathlib import Path
 from typing import Dict, Optional
 import pandas as pd
-
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+# Add project root to path
+project_root = Path(__file__).parent.parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 
 def render_lb_page():

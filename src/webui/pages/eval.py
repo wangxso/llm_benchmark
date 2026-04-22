@@ -8,10 +8,12 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional
 import pandas as pd
-
-# Import eval module
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+# Add project root to path
+project_root = Path(__file__).parent.parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 from src.eval import get_benchmark, list_benchmarks, EvalRunner
 

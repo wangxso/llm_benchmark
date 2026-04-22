@@ -1,6 +1,13 @@
 """Streamlit WebUI for LLM Benchmark"""
 
 import streamlit as st
+import sys
+from pathlib import Path
+
+# Add project root to path for imports
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 st.set_page_config(
     page_title="LLM Benchmark",
@@ -20,19 +27,19 @@ page = st.sidebar.radio(
 
 st.sidebar.markdown("---")
 
-# Navigation
+# Navigation with absolute imports
 if page == "Model Check":
-    from .pages.check import render_check_page
+    from src.webui.pages.check import render_check_page
     render_check_page()
 elif page == "Evaluation":
-    from .pages.eval import render_eval_page
+    from src.webui.pages.eval import render_eval_page
     render_eval_page()
 elif page == "Load Testing":
-    from .pages.lb import render_lb_page
+    from src.webui.pages.lb import render_lb_page
     render_lb_page()
 elif page == "Results":
-    from .pages.results import render_results_page
+    from src.webui.pages.results import render_results_page
     render_results_page()
 elif page == "Settings":
-    from .pages.settings import render_settings_page
+    from src.webui.pages.settings import render_settings_page
     render_settings_page()
