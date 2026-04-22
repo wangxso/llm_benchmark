@@ -21,6 +21,7 @@ class BaseBenchmark(ABC):
         subject: Optional[str] = None,
         max_samples: Optional[int] = None,
         token: Optional[str] = None,
+        offline: bool = False,
     ) -> List[Dict[str, Any]]:
         """Load dataset from HuggingFace
 
@@ -29,6 +30,7 @@ class BaseBenchmark(ABC):
             subject: Optional subject filter
             max_samples: Maximum samples to load
             token: HuggingFace token for gated datasets
+            offline: Use cached dataset only (no network)
 
         Returns:
             List of items with unified format:
@@ -57,6 +59,8 @@ class BaseBenchmark(ABC):
                 load_kwargs["name"] = self.hf_name
             if token:
                 load_kwargs["token"] = token
+            if offline:
+                load_kwargs["download_mode"] = "force_redownload" if os.environ.get("FORCE_REDOWNLOAD") else "reuse_cache_if_exists"
 
             ds = load_dataset(**load_kwargs)
         except Exception as e:

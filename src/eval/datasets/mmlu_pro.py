@@ -47,9 +47,10 @@ class MMLUProBenchmark(BaseBenchmark):
         subject: Optional[str] = None,
         max_samples: Optional[int] = None,
         token: Optional[str] = None,
+        offline: bool = False,
     ) -> List[Dict[str, Any]]:
         """Load MMLU-Pro dataset"""
-        return super().load(split=split, subject=subject, max_samples=max_samples, token=token)
+        return super().load(split=split, subject=subject, max_samples=max_samples, token=token, offline=offline)
 
     def _parse_row(self, row: Dict) -> Optional[Dict[str, Any]]:
         """Parse MMLU-Pro row format

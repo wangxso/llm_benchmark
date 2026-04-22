@@ -35,12 +35,13 @@ class GPQABenchmark(BaseBenchmark):
         subject: Optional[str] = None,
         max_samples: Optional[int] = None,
         token: Optional[str] = None,
+        offline: bool = False,
     ) -> List[Dict[str, Any]]:
         """Load GPQA dataset
 
         GPQA uses 'train' split as it's a single dataset.
         """
-        return super().load(split="train", subject=subject, max_samples=max_samples, token=token)
+        return super().load(split="train", subject=subject, max_samples=max_samples, token=token, offline=offline)
 
     def _parse_row(self, row: Dict) -> Optional[Dict[str, Any]]:
         """Parse GPQA row format

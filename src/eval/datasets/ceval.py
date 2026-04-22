@@ -88,6 +88,7 @@ class CEvalBenchmark(BaseBenchmark):
         subject: Optional[str] = None,
         max_samples: Optional[int] = None,
         token: Optional[str] = None,
+        offline: bool = False,
     ) -> List[Dict[str, Any]]:
         """Load C-Eval dataset
 
@@ -120,6 +121,8 @@ class CEvalBenchmark(BaseBenchmark):
                 }
                 if token:
                     load_kwargs["token"] = token
+                if offline:
+                    load_kwargs["download_mode"] = "reuse_cache_if_exists"
 
                 ds = load_dataset(**load_kwargs)
 

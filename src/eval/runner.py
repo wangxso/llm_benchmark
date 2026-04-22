@@ -34,6 +34,7 @@ class EvalRunner:
         concurrency: int = 8,
         rate_limit: float = 0,
         timeout: int = 60,
+        offline: bool = False,
         hf_token: Optional[str] = None,
         api_base_url: Optional[str] = None,
         api_key: Optional[str] = None,
@@ -46,6 +47,7 @@ class EvalRunner:
         self.concurrency = concurrency
         self.rate_limit = rate_limit
         self.timeout = timeout
+        self.offline = offline
         self.hf_token = hf_token
         self.api_key = api_key
         self.api_type = api_type.lower()
@@ -274,6 +276,7 @@ class EvalRunner:
             subject=subject,
             max_samples=max_samples,
             token=self.hf_token,
+            offline=self.offline,
         )
 
         if not items:

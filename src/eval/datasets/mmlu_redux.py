@@ -21,15 +21,16 @@ class MMLUReduxBenchmark(BaseBenchmark):
         subject: Optional[str] = None,
         max_samples: Optional[int] = None,
         token: Optional[str] = None,
+        offline: bool = False,
     ) -> List[Dict[str, Any]]:
         """Load MMLU-Redux dataset"""
         # MMLU-Redux uses subject-specific splits
         if subject:
             try:
-                return super().load(split=subject, max_samples=max_samples, token=token)
+                return super().load(split=subject, max_samples=max_samples, token=token, offline=offline)
             except Exception:
                 pass
-        return super().load(split=split, subject=subject, max_samples=max_samples, token=token)
+        return super().load(split=split, subject=subject, max_samples=max_samples, token=token, offline=offline)
 
     def _parse_row(self, row: Dict) -> Optional[Dict[str, Any]]:
         """Parse MMLU-Redux row format

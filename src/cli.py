@@ -31,6 +31,7 @@ def cli():
 @click.option("--concurrency", "-c", type=int, default=8, help="Concurrent requests")
 @click.option("--rate-limit", "-r", type=float, default=0, help="Max requests per second (0=unlimited)")
 @click.option("--timeout", "-t", type=int, default=60, help="Request timeout in seconds")
+@click.option("--offline", is_flag=True, help="Use cached datasets only (no network)")
 @click.option("--output", "-o", type=str, default="./results", help="Output directory")
 @click.option("--list", "list_benchmarks", is_flag=True, help="List available benchmarks")
 @click.option("--hf-token", type=str, help="HuggingFace token for gated datasets")
@@ -107,6 +108,7 @@ def eval_cmd(**kwargs):
         concurrency=kwargs.get("concurrency", 8),
         rate_limit=kwargs.get("rate_limit", 0),
         timeout=kwargs.get("timeout", 60),
+        offline=kwargs.get("offline", False),
         hf_token=kwargs.get("hf_token"),
         api_base_url=kwargs.get("api_base_url"),
         api_key=kwargs.get("api_key"),

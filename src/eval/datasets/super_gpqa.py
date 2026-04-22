@@ -53,9 +53,10 @@ class SuperGPQABenchmark(BaseBenchmark):
         subject: Optional[str] = None,
         max_samples: Optional[int] = None,
         token: Optional[str] = None,
+        offline: bool = False,
     ) -> List[Dict[str, Any]]:
         """Load SuperGPQA dataset"""
-        return super().load(split="train", subject=subject, max_samples=max_samples, token=token)
+        return super().load(split="train", subject=subject, max_samples=max_samples, token=token, offline=offline)
 
     def _parse_row(self, row: Dict) -> Optional[Dict[str, Any]]:
         """Parse SuperGPQA row format
