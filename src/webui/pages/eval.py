@@ -318,8 +318,9 @@ def display_eval_results(report: Dict, elapsed: float):
                 "Correct": f"{stats['correct']}/{stats['total']}",
             })
 
-        df = pd.DataFrame(data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        if data:
+            df = pd.DataFrame(data)
+            st.table(df)
 
     # By Category
     categories = report.get("categories", {})
@@ -337,7 +338,7 @@ def display_eval_results(report: Dict, elapsed: float):
 
         if data:
             df = pd.DataFrame(data)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.table(df)
 
     # Report file
     if report.get("report_file"):

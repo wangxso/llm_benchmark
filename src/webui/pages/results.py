@@ -185,7 +185,9 @@ def show_eval_detail(data: Dict):
                 "Accuracy": f"{stats['accuracy'] * 100:.1f}%",
                 "Correct": f"{stats['correct']}/{stats['total']}",
             })
-        st.dataframe(pd.DataFrame(df_data), hide_index=True)
+        if df_data:
+            df = pd.DataFrame(df_data)
+            st.table(df)
 
 
 def show_load_test_detail(data: Dict):

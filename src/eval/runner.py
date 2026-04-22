@@ -313,8 +313,9 @@ class EvalRunner:
         results = []
 
         # Rate limiter with lock for thread safety
+        # Rate limit is in RPM (requests per minute), convert to seconds
         rate_lock = asyncio.Lock()
-        min_interval = 1.0 / self.rate_limit if self.rate_limit > 0 else 0
+        min_interval = 60.0 / self.rate_limit if self.rate_limit > 0 else 0
 
         async def rate_limited_evaluate(session, item):
             """Wrap evaluation with rate limiting"""

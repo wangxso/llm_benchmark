@@ -29,7 +29,7 @@ def cli():
 @click.option("--prompt-style", type=click.Choice(["zero_shot", "few_shot", "cot", "zero_shot_cn", "few_shot_cn", "cot_cn"]),
               default="zero_shot", help="Prompt style")
 @click.option("--concurrency", "-c", type=int, default=8, help="Concurrent requests")
-@click.option("--rate-limit", "-r", type=float, default=0, help="Max requests per second (0=unlimited)")
+@click.option("--rate-limit", "-r", type=float, default=0, help="Max requests per minute (0=unlimited)")
 @click.option("--timeout", "-t", type=int, default=60, help="Request timeout in seconds")
 @click.option("--offline", is_flag=True, help="Use cached datasets only (no network)")
 @click.option("--output", "-o", type=str, default="./results", help="Output directory")
