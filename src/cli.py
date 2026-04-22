@@ -29,6 +29,8 @@ def cli():
 @click.option("--prompt-style", type=click.Choice(["zero_shot", "few_shot", "cot", "zero_shot_cn", "few_shot_cn", "cot_cn"]),
               default="zero_shot", help="Prompt style")
 @click.option("--concurrency", "-c", type=int, default=8, help="Concurrent requests")
+@click.option("--rate-limit", "-r", type=float, default=0, help="Max requests per second (0=unlimited)")
+@click.option("--timeout", "-t", type=int, default=60, help="Request timeout in seconds")
 @click.option("--output", "-o", type=str, default="./results", help="Output directory")
 @click.option("--list", "list_benchmarks", is_flag=True, help="List available benchmarks")
 @click.option("--hf-token", type=str, help="HuggingFace token for gated datasets")
@@ -66,10 +68,14 @@ def eval_cmd(**kwargs):
         click.echo("  Remote: --api-base-url https://api.example.com/v1 --api-key YOUR_KEY --model MODEL_NAME")
         sys.exit(1)
 
-    # For remote API, model is required
-    if kwargs.get("api_base_url") and not kwargs.get("model"):
-        click.echo("Error: --model is required when using --api-base-url", err=True)
-        sys.exit(1)
+    # For remote API, model and api-key are required
+    if kwargs.get("api_base_url"):
+        if not kwargs.get("model"):
+            click.echo("Error: --model is required when using --api-base-url", err=True)
+            sys.exit(1)
+        if not kwargs.get("api_key"):
+            click.echo("Error: --api-key is required when using --api-base-url", err=True)
+            sys.exit(1)
 
     benchmark_name = kwargs.get("benchmark", "gpqa")
 
@@ -99,6 +105,8 @@ def eval_cmd(**kwargs):
         port=kwargs.get("vllm_port", 8000),
         model=kwargs.get("model"),
         concurrency=kwargs.get("concurrency", 8),
+        rate_limit=kwargs.get("rate_limit", 0),
+        timeout=kwargs.get("timeout", 60),
         hf_token=kwargs.get("hf_token"),
         api_base_url=kwargs.get("api_base_url"),
         api_key=kwargs.get("api_key"),
@@ -125,6 +133,22 @@ def print_eval_summary(report):
     click.echo(f"Prompt style: {report.get('prompt_style', 'unknown')}")
     click.echo(f"\nOverall Accuracy: {report.get('overall_accuracy', 0) * 100:.2f}%")
     click.echo(f"Correct: {report.get('correct', 0)} / {report.get('total_questions', 0)}")
+
+    # Show error statistics if there are failures
+    failed = report.get("failed_count", 0)
+    if failed > 0:
+        click.echo(f"\n[Errors]")
+        click.echo(f"  Failed requests: {failed}")
+        error_types = report.get("error_types", {})
+        error_details = report.get("error_details", {})
+        for err_type, count in sorted(error_types.items(), key=lambda x: -x[1]):
+            click.echo(f"  - {err_type}: {count}")
+            # Show detailed error messages for this type
+            if err_type in error_details:
+                for detail, detail_count in sorted(error_details[err_type].items(), key=lambda x: -x[1])[:3]:
+                    # Truncate long messages
+                    detail_display = detail if len(detail) <= 80 else detail[:77] + "..."
+                    click.echo(f"      [{detail_count}x] {detail_display}")
 
     # Print category breakdown if available
     categories = report.get("categories", {})
@@ -158,6 +182,186 @@ def print_eval_summary(report):
         click.echo(f"\nReport saved: {report['report_file']}")
 
     click.echo("=" * 50 + "\n")
+
+
+@cli.command("check")
+@click.option("--api-base-url", type=str, help="API base URL")
+@click.option("--api-key", type=str, help="API key")
+@click.option("--api-type", type=click.Choice(["openai", "anthropic"]), default="openai", help="API type")
+@click.option("--model", "-m", type=str, required=True, help="Model name")
+@click.option("--timeout", "-t", type=int, default=60, help="Request timeout in seconds")
+def check_cmd(**kwargs):
+    """Quick model capability check to detect if model is degraded.
+
+    Tests basic reasoning, math, and knowledge capabilities.
+
+    Examples:
+        bench.py check --model gpt-4 --api-key sk-xxx --api-base-url https://api.openai.com/v1
+        bench.py check --model MiniMax-M2.7 --api-type anthropic --api-key sk-xxx --api-base-url https://api.minimaxi.com/anthropic
+    """
+    import asyncio
+    import aiohttp
+    import json
+
+    # Test questions with expected answers
+    tests = [
+        {
+            "name": "Simple Math",
+            "prompt": "What is 15 + 27? Answer with just the number.",
+            "check": lambda r: "42" in r,
+        },
+        {
+            "name": "Basic Knowledge",
+            "prompt": "What is the capital of France? Answer with just the city name.",
+            "check": lambda r: "paris" in r.lower(),
+        },
+        {
+            "name": "Logic Reasoning",
+            "prompt": "If all cats are mammals, and Tom is a cat, is Tom a mammal? Answer yes or no.",
+            "check": lambda r: "yes" in r.lower(),
+        },
+        {
+            "name": "Code Ability",
+            "prompt": "Write a Python function to calculate factorial. Just output the function code, no explanation.",
+            "check": lambda r: "def " in r and "factorial" in r.lower(),
+        },
+        {
+            "name": "Chinese",
+            "prompt": "用中文回答：1+1等于几？只回答数字。",
+            "check": lambda r: "2" in r or "二" in r,
+        },
+    ]
+
+    base_url = kwargs.get("api_base_url", "").rstrip("/")
+    api_key = kwargs.get("api_key")
+    api_type = kwargs.get("api_type", "openai")
+    model = kwargs.get("model")
+    timeout = kwargs.get("timeout", 60)
+
+    if not base_url:
+        click.echo("Error: --api-base-url is required", err=True)
+        return
+    if not api_key:
+        click.echo("Error: --api-key is required", err=True)
+        return
+
+    click.echo("=" * 50)
+    click.echo("MODEL CAPABILITY CHECK")
+    click.echo("=" * 50)
+    click.echo(f"\nModel: {model}")
+    click.echo(f"API: {base_url}")
+    click.echo(f"Type: {api_type}")
+    click.echo()
+
+    # Prepare headers
+    if api_type == "anthropic":
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        # Handle MiniMax anthropic endpoint
+        if base_url.endswith("/anthropic"):
+            url = f"{base_url}/v1/messages"
+        else:
+            url = f"{base_url}/messages" if not base_url.endswith("/messages") else base_url
+    else:
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+        url = f"{base_url}/chat/completions"
+
+    async def run_check():
+        results = []
+        async with aiohttp.ClientSession() as session:
+            for test in tests:
+                try:
+                    if api_type == "anthropic":
+                        payload = {
+                            "model": model,
+                            "max_tokens": 500,
+                            "messages": [{"role": "user", "content": test["prompt"]}],
+                        }
+                    else:
+                        payload = {
+                            "model": model,
+                            "max_tokens": 500,
+                            "temperature": 0.0,
+                            "messages": [{"role": "user", "content": test["prompt"]}],
+                        }
+
+                    async with session.post(
+                        url,
+                        json=payload,
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=timeout),
+                    ) as resp:
+                        if resp.status != 200:
+                            text = await resp.text()
+                            # Try to extract error message
+                            try:
+                                err_data = json.loads(text)
+                                detail = err_data.get("error", {}).get("message", text[:100])
+                            except:
+                                detail = text[:100]
+                            results.append({
+                                "name": test["name"],
+                                "passed": False,
+                                "error": f"HTTP {resp.status}: {detail}",
+                            })
+                            continue
+
+                        data = await resp.json()
+
+                        if api_type == "anthropic":
+                            content = data.get("content", [{}])[0].get("text", "") if isinstance(data.get("content"), list) else data.get("content", "")
+                        else:
+                            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+                        passed = test["check"](content)
+                        results.append({
+                            "name": test["name"],
+                            "passed": passed,
+                            "response": content[:100] + "..." if len(content) > 100 else content,
+                        })
+
+                except asyncio.TimeoutError:
+                    results.append({"name": test["name"], "passed": False, "error": "Timeout"})
+                except Exception as e:
+                    results.append({"name": test["name"], "passed": False, "error": str(e)[:100]})
+
+        return results
+
+    results = asyncio.run(run_check())
+
+    # Print results
+    passed = sum(1 for r in results if r["passed"])
+    total = len(results)
+
+    for r in results:
+        status = "✓ PASS" if r["passed"] else "✗ FAIL"
+        click.echo(f"  [{status}] {r['name']}")
+        if r["passed"]:
+            click.echo(f"         Response: {r.get('response', 'N/A')}")
+        else:
+            click.echo(f"         Error: {r.get('error', r.get('response', 'Unknown'))}")
+
+    click.echo()
+    click.echo("-" * 50)
+
+    # Verdict
+    pass_rate = passed / total * 100 if total > 0 else 0
+    click.echo(f"Result: {passed}/{total} tests passed ({pass_rate:.0f}%)")
+
+    if pass_rate >= 80:
+        click.echo("Verdict: ✓ Model appears to be working normally")
+    elif pass_rate >= 40:
+        click.echo("Verdict: ⚠ Model may be partially degraded")
+    else:
+        click.echo("Verdict: ✗ Model appears to be degraded or misconfigured")
+
+    click.echo("=" * 50)
 
 
 @cli.command()

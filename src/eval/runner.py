@@ -32,6 +32,7 @@ class EvalRunner:
         port: int = 8000,
         model: Optional[str] = None,
         concurrency: int = 8,
+        rate_limit: float = 0,
         timeout: int = 60,
         hf_token: Optional[str] = None,
         api_base_url: Optional[str] = None,
@@ -43,6 +44,7 @@ class EvalRunner:
         self.port = port
         self.model = model
         self.concurrency = concurrency
+        self.rate_limit = rate_limit
         self.timeout = timeout
         self.hf_token = hf_token
         self.api_key = api_key
@@ -90,7 +92,23 @@ class EvalRunner:
             ) as response:
                 if response.status != 200:
                     text = await response.text()
-                    return {"success": False, "error": f"HTTP {response.status}: {text}"}
+                    # Try to extract error message from JSON before truncating
+                    detail = ""
+                    try:
+                        err_data = json.loads(text)
+                        err_obj = err_data.get("error", {})
+                        if isinstance(err_obj, dict):
+                            detail = err_obj.get("message", "")
+                        elif err_obj:
+                            detail = str(err_obj)
+                    except:
+                        pass
+                    err_summary = f"HTTP {response.status}"
+                    if detail:
+                        err_summary += f": {detail}"
+                    elif text:
+                        err_summary += f": {text[:200]}"
+                    return {"success": False, "error": err_summary}
 
                 data = await response.json()
                 content = data["choices"][0]["message"]["content"]
@@ -116,10 +134,24 @@ class EvalRunner:
         }
 
         try:
-            # Anthropic API endpoint
-            url = self.base_url if "/messages" in self.base_url else f"{self.base_url}/messages"
-            if "api.anthropic.com" in self.base_url and "/v1/messages" not in self.base_url:
+            # Determine the correct URL
+            # User might provide:
+            # 1. Full endpoint URL (contains /messages or /chat/completions)
+            # 2. Base URL (we append /v1/messages for Anthropic)
+            if "/messages" in self.base_url or "/chat/completions" in self.base_url:
+                # User provided full URL, use as-is
+                url = self.base_url
+            elif "api.anthropic.com" in self.base_url:
+                # Official Anthropic API
                 url = "https://api.anthropic.com/v1/messages"
+            elif self.base_url.rstrip("/").endswith("/anthropic"):
+                # MiniMax and similar providers: base_url ends with /anthropic
+                # Need to append /v1/messages
+                url = f"{self.base_url.rstrip('/')}/v1/messages"
+            else:
+                # For other Anthropic-compatible providers
+                # Try without appending /messages first, then with /messages
+                url = self.base_url
 
             async with session.post(
                 url,
@@ -127,9 +159,43 @@ class EvalRunner:
                 headers=self._get_headers(),
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
             ) as response:
+                # If 404, try appending /messages
+                if response.status == 404 and "/messages" not in url:
+                    new_url = f"{url.rstrip('/')}/messages"
+                    async with session.post(
+                        new_url,
+                        json=payload,
+                        headers=self._get_headers(),
+                        timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    ) as retry_response:
+                        if retry_response.status == 200:
+                            data = await retry_response.json()
+                            if "content" in data and isinstance(data["content"], list):
+                                content = data["content"][0].get("text", "")
+                            else:
+                                content = data.get("content", "")
+                            return {"success": True, "response": content}
+                        response = retry_response
+
                 if response.status != 200:
                     text = await response.text()
-                    return {"success": False, "error": f"HTTP {response.status}: {text}"}
+                    # Try to extract error message from JSON before truncating
+                    detail = ""
+                    try:
+                        err_data = json.loads(text)
+                        err_obj = err_data.get("error", {})
+                        if isinstance(err_obj, dict):
+                            detail = err_obj.get("message", "")
+                        elif err_obj:
+                            detail = str(err_obj)
+                    except:
+                        pass
+                    err_summary = f"HTTP {response.status}"
+                    if detail:
+                        err_summary += f": {detail}"
+                    elif text:
+                        err_summary += f": {text[:200]}"
+                    return {"success": False, "error": err_summary}
 
                 data = await response.json()
                 # Anthropic response format
@@ -243,9 +309,20 @@ class EvalRunner:
         semaphore = asyncio.Semaphore(self.concurrency)
         results = []
 
+        # Rate limiter with lock for thread safety
+        rate_lock = asyncio.Lock()
+        min_interval = 1.0 / self.rate_limit if self.rate_limit > 0 else 0
+
+        async def rate_limited_evaluate(session, item):
+            """Wrap evaluation with rate limiting"""
+            if min_interval > 0:
+                async with rate_lock:
+                    await asyncio.sleep(min_interval)
+            return await self._evaluate_item(session, item, prompt_style, semaphore)
+
         async with aiohttp.ClientSession() as session:
             tasks = [
-                self._evaluate_item(session, item, prompt_style, semaphore)
+                rate_limited_evaluate(session, item)
                 for item in items
             ]
 
@@ -259,6 +336,48 @@ class EvalRunner:
 
         # Calculate metrics
         metrics = score_results([r for r in results if r.get("success")])
+
+        # Calculate error statistics with detailed reasons
+        failed_count = sum(1 for r in results if not r.get("success"))
+        error_types = {}
+        error_details = {}  # Store detailed error messages
+
+        for r in results:
+            if not r.get("success") and r.get("error"):
+                err_msg = r["error"]
+
+                # Categorize error by HTTP status or keywords
+                if "HTTP 401" in err_msg or "authentication" in err_msg.lower():
+                    key = "Authentication Error"
+                elif "HTTP 403" in err_msg:
+                    key = "Forbidden"
+                elif "HTTP 404" in err_msg:
+                    key = "Not Found (check API endpoint)"
+                elif "HTTP 429" in err_msg or "rate_limit" in err_msg.lower():
+                    key = "Rate Limited"
+                elif "Timeout" in err_msg:
+                    key = "Timeout"
+                elif "Connection" in err_msg:
+                    key = "Connection Error"
+                elif "overloaded" in err_msg or "529" in err_msg:
+                    key = "Server Overloaded"
+                else:
+                    key = "Other"
+
+                error_types[key] = error_types.get(key, 0) + 1
+
+                # Extract detail message (after the HTTP status)
+                if ": " in err_msg:
+                    detail = err_msg.split(": ", 1)[1]
+                else:
+                    detail = err_msg
+
+                # Store detailed message for this error type
+                if key not in error_details:
+                    error_details[key] = {}
+                # Use first 100 chars of detail as key to group similar errors
+                detail_key = detail[:100]
+                error_details[key][detail_key] = error_details[key].get(detail_key, 0) + 1
 
         # Calculate category metrics if benchmark has categories
         category_map = getattr(self.benchmark, "get_category_map", lambda: None)()
@@ -279,6 +398,9 @@ class EvalRunner:
             "correct": metrics["correct"],
             "subjects": metrics["subjects"],
             "categories": metrics.get("categories", {}),
+            "failed_count": failed_count,
+            "error_types": error_types,
+            "error_details": error_details,
             "timestamp": datetime.now().isoformat(),
             "config": {
                 "api_type": self.api_type,

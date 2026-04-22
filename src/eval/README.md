@@ -14,7 +14,7 @@
 
 ## 快速开始
 
-### 1. 启动 vLLM 服务
+### 1. 启动 vLLM 服务（本地测试）
 
 ```bash
 vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000
@@ -23,17 +23,28 @@ vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000
 ### 2. 运行评测
 
 ```bash
-# 查看可用评测集
-bench.py eval --list
-
-# 运行 GPQA 评测（100 样本）
+# 本地 vLLM 服务
 bench.py eval --benchmark gpqa --vllm-host localhost --samples 100
 
-# 运行完整 MMLU-Pro
-bench.py eval --benchmark mmlu-pro --vllm-host localhost
+# 远程 OpenAI 兼容 API
+bench.py eval --benchmark ceval \
+    --api-base-url https://api.openai.com/v1 \
+    --api-key sk-xxx \
+    --model gpt-4
 
-# 指定学科评测
-bench.py eval --benchmark mmlu-pro --vllm-host localhost --subject math
+# Anthropic API
+bench.py eval --benchmark gpqa \
+    --api-type anthropic \
+    --api-base-url https://api.anthropic.com \
+    --api-key sk-ant-xxx \
+    --model claude-3-haiku-20240307
+
+# 其他兼容 API（如 MiniMax）
+bench.py eval --benchmark gpqa \
+    --api-type anthropic \
+    --api-base-url https://api.minimaxi.com/anthropic \
+    --api-key YOUR_KEY \
+    --model MiniMax-M2.7
 ```
 
 ## 命令行参数
@@ -41,15 +52,18 @@ bench.py eval --benchmark mmlu-pro --vllm-host localhost --subject math
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
 | `--benchmark`, `-b` | 评测集名称 | `gpqa` |
-| `--vllm-host` | vLLM 服务器地址 | 必填 |
+| `--vllm-host` | vLLM 服务器地址（本地） | - |
 | `--vllm-port` | vLLM 端口 | `8000` |
-| `--model` | 模型名称（自动检测） | 自动 |
+| `--model`, `-m` | 模型名称 | 自动检测 |
 | `--samples`, `-n` | 最大评测样本数 | 全部 |
 | `--subject` | 筛选学科 | 全部 |
 | `--prompt-style` | Prompt 风格 | `zero_shot` |
 | `--concurrency`, `-c` | 并发请求数 | `8` |
 | `--output`, `-o` | 输出目录 | `./results` |
 | `--hf-token` | HuggingFace Token | 自动检测 |
+| `--api-base-url` | 远程 API 地址 | - |
+| `--api-key` | 远程 API Key | - |
+| `--api-type` | API 类型 (`openai`/`anthropic`) | `openai` |
 | `--list` | 列出可用评测集 | - |
 
 ## Prompt 风格
