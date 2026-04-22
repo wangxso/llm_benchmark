@@ -6,11 +6,10 @@ import glob
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
-import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend
+matplotlib.use('Agg')  # Non-interactive backend must be set before pyplot import
+import matplotlib.pyplot as plt
 import numpy as np
-import io
 
 
 def render_results_page():
@@ -199,7 +198,7 @@ def show_eval_detail(data: Dict):
             if subjects:
                 st.markdown("### 📈 Accuracy by Subject")
 
-                fig, ax = plt.subplots(figsize=(8, 4))
+                fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
                 names = list(subjects.keys())
                 accuracies = [s['accuracy'] * 100 for s in subjects.values()]
 
@@ -217,42 +216,39 @@ def show_eval_detail(data: Dict):
                            f'{acc:.1f}%', ha='center', va='bottom', fontsize=9)
 
                 plt.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
+                st.pyplot(fig, clear_figure=True)
 
         with col2:
             # Error pie chart or correct/incorrect pie
             if error_types and data.get("failed_count", 0) > 0:
                 st.markdown("### 🥧 Error Distribution")
 
-                fig, ax = plt.subplots(figsize=(6, 4))
+                fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
                 err_names = list(error_types.keys())
                 err_counts = list(error_types.values())
 
                 colors = plt.cm.Set3(np.linspace(0, 1, len(err_names)))
-                ax.pie(err_counts, labels=err_names, autopct='%1.1f%%', colors=colors)
-                ax.axis('equal')
+                wedges, texts, autotexts = ax.pie(err_counts, labels=err_names,
+                                                   autopct='%1.1f%%', colors=colors)
 
                 plt.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
+                st.pyplot(fig, clear_figure=True)
 
             elif subjects:
                 st.markdown("### 🎯 Correct vs Incorrect")
 
-                correct = data.get('correct', 0)
-                incorrect = data.get('total_questions', 0) - correct
+                correct_count = data.get('correct', 0)
+                incorrect_count = data.get('total_questions', 0) - correct_count
 
-                fig, ax = plt.subplots(figsize=(6, 4))
-                ax.pie([correct, incorrect],
-                      labels=['Correct', 'Incorrect'],
-                      autopct='%1.1f%%',
-                      colors=['#4ecdc4', '#ff6b6b'])
-                ax.axis('equal')
+                if correct_count + incorrect_count > 0:
+                    fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
+                    ax.pie([correct_count, incorrect_count],
+                          labels=['Correct', 'Incorrect'],
+                          autopct='%1.1f%%',
+                          colors=['#4ecdc4', '#ff6b6b'])
 
-                plt.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
+                    plt.tight_layout()
+                    st.pyplot(fig, clear_figure=True)
 
     st.markdown("")  # Spacing
 
@@ -296,7 +292,7 @@ def show_eval_detail(data: Dict):
             col1, col2 = st.columns([2, 1])
 
             with col1:
-                fig, ax = plt.subplots(figsize=(8, 3))
+                fig, ax = plt.subplots(figsize=(8, 3), dpi=100)
                 cat_names = [c['Category'] for c in cat_data]
                 cat_accs = [c['Accuracy'] for c in cat_data]
 
@@ -313,8 +309,7 @@ def show_eval_detail(data: Dict):
                            f'{acc:.1f}%', ha='center', va='bottom', fontsize=9)
 
                 plt.tight_layout()
-                st.pyplot(fig)
-                plt.close(fig)
+                st.pyplot(fig, clear_figure=True)
 
             with col2:
                 table_md = "| Category | Acc |\n|----------|-----|\n"
@@ -360,7 +355,7 @@ def show_load_test_detail(data: Dict):
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        fig, ax = plt.subplots(figsize=(8, 4))
+        fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
         bars = ax.bar(latency_cols, latency_values, color=['#3498db', '#2ecc71', '#f39c12', '#e74c3c'])
         ax.set_ylabel('Latency (ms)')
         ax.set_title('Latency Percentiles')
@@ -370,8 +365,7 @@ def show_load_test_detail(data: Dict):
                    f'{val:.1f}', ha='center', va='bottom', fontsize=10)
 
         plt.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
+        st.pyplot(fig, clear_figure=True)
 
     with col2:
         table_md = "| Metric | Value |\n|--------|-------|\n"
@@ -390,18 +384,16 @@ def show_load_test_detail(data: Dict):
     col1, col2 = st.columns([1, 2])
 
     with col1:
-        fig, ax = plt.subplots(figsize=(5, 5))
+        fig, ax = plt.subplots(figsize=(5, 5), dpi=100)
         ax.pie([success_rate * 100, error_rate * 100],
               labels=['Success', 'Error'],
               autopct='%1.1f%%',
               colors=['#4ecdc4', '#ff6b6b'],
               explode=(0.05, 0))
         ax.set_title('Request Success Rate')
-        ax.axis('equal')
 
         plt.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
+        st.pyplot(fig, clear_figure=True)
 
     with col2:
         # vLLM metrics if available
@@ -410,7 +402,7 @@ def show_load_test_detail(data: Dict):
             st.markdown("**vLLM Metrics**")
 
             # Create a horizontal bar chart for vLLM metrics
-            fig, ax = plt.subplots(figsize=(6, 3))
+            fig, ax = plt.subplots(figsize=(6, 3), dpi=100)
             vllm_names = ['KV Cache\nUsage', 'GPU\nUtilization']
             vllm_values = [
                 vllm_metrics.get('kv_cache_usage', 0) * 100,
@@ -426,8 +418,7 @@ def show_load_test_detail(data: Dict):
                        f'{val:.1f}%', va='center', fontsize=10)
 
             plt.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
+            st.pyplot(fig, clear_figure=True)
 
             st.metric("Avg Batch Size", f"{vllm_metrics.get('batch_size', 0):.1f}")
         else:
