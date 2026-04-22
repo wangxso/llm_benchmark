@@ -6,7 +6,11 @@ import glob
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
-import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
+import numpy as np
+import io
 
 
 def render_results_page():
@@ -46,7 +50,7 @@ def render_results_page():
 
     st.markdown(f"**Found {len(filtered_files)} results**")
 
-    # Display results
+    # Display results list
     for file_info in filtered_files[:20]:  # Limit to 20 results
         with st.container():
             col1, col2, col3 = st.columns([2, 2, 1])
@@ -62,9 +66,14 @@ def render_results_page():
 
             with col3:
                 if st.button("View", key=f"view_{file_info['path']}"):
-                    show_result_detail(file_info['path'])
+                    st.session_state['selected_result'] = file_info['path']
 
             st.divider()
+
+    # Show selected result detail
+    if 'selected_result' in st.session_state and st.session_state['selected_result']:
+        st.markdown("---")
+        show_result_detail(st.session_state['selected_result'])
 
 
 def scan_results(results_dir: str) -> List[Dict]:
@@ -154,48 +163,292 @@ def show_result_detail(file_path: str):
 
 
 def show_eval_detail(data: Dict):
-    """Show evaluation result details"""
-    col1, col2 = st.columns(2)
+    """Show evaluation result details with charts"""
+    st.markdown("## 📊 Evaluation Details")
 
-    with col1:
-        st.metric("Accuracy", f"{data.get('overall_accuracy', 0) * 100:.2f}%")
-        st.metric("Model", data.get("model", "unknown"))
-
-    with col2:
-        correct = data.get("correct", 0)
-        total = data.get("total_questions", 0)
-        st.metric("Correct", f"{correct}/{total}")
-        st.metric("Failed", data.get("failed_count", 0))
-
-    # Errors
-    if data.get("failed_count", 0) > 0:
-        st.markdown("#### Errors")
-        error_types = data.get("error_types", {})
-        for err_type, count in error_types.items():
-            st.write(f"- **{err_type}**: {count}")
-
-    # Subjects
-    subjects = data.get("subjects", {})
-    if subjects:
-        st.markdown("#### By Subject")
-        # Use markdown table instead of dataframe
-        table_md = "| Subject | Accuracy | Correct |\n|---------|----------|--------|\n"
-        for subject, stats in subjects.items():
-            table_md += f"| {subject} | {stats['accuracy'] * 100:.1f}% | {stats['correct']}/{stats['total']} |\n"
-        st.markdown(table_md)
-
-
-def show_load_test_detail(data: Dict):
-    """Show load test result details"""
-    metrics = data.get("metrics", {})
-
+    # Key metrics row
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.metric("QPS", f"{metrics.get('qps', 0):.2f}")
+        accuracy = data.get('overall_accuracy', 0) * 100
+        st.metric("Accuracy", f"{accuracy:.2f}%")
+
     with col2:
-        st.metric("TPS", f"{metrics.get('tps', 0):.2f}")
+        correct = data.get('correct', 0)
+        total = data.get('total_questions', 0)
+        st.metric("Correct", f"{correct}/{total}")
+
     with col3:
-        st.metric("P99", f"{metrics.get('latency_p99_ms', 0):.1f}ms")
+        failed = data.get('failed_count', 0)
+        st.metric("Failed", failed)
+
     with col4:
-        st.metric("Success", f"{metrics.get('success_rate', 0) * 100:.1f}%")
+        st.metric("Model", data.get("model", "unknown"))
+
+    st.markdown("")  # Spacing
+
+    # Accuracy pie chart and error breakdown
+    subjects = data.get("subjects", {})
+    error_types = data.get("error_types", {})
+
+    if subjects or error_types:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # Subject accuracy bar chart
+            if subjects:
+                st.markdown("### 📈 Accuracy by Subject")
+
+                fig, ax = plt.subplots(figsize=(8, 4))
+                names = list(subjects.keys())
+                accuracies = [s['accuracy'] * 100 for s in subjects.values()]
+
+                colors = ['#4ecdc4' if acc >= 50 else '#ff6b6b' for acc in accuracies]
+                bars = ax.bar(range(len(names)), accuracies, color=colors)
+                ax.set_xticks(range(len(names)))
+                ax.set_xticklabels(names, rotation=45, ha='right')
+                ax.set_ylabel('Accuracy (%)')
+                ax.set_ylim(0, 100)
+                ax.axhline(y=50, color='gray', linestyle='--', alpha=0.5)
+
+                # Add value labels on bars
+                for bar, acc in zip(bars, accuracies):
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                           f'{acc:.1f}%', ha='center', va='bottom', fontsize=9)
+
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+
+        with col2:
+            # Error pie chart or correct/incorrect pie
+            if error_types and data.get("failed_count", 0) > 0:
+                st.markdown("### 🥧 Error Distribution")
+
+                fig, ax = plt.subplots(figsize=(6, 4))
+                err_names = list(error_types.keys())
+                err_counts = list(error_types.values())
+
+                colors = plt.cm.Set3(np.linspace(0, 1, len(err_names)))
+                ax.pie(err_counts, labels=err_names, autopct='%1.1f%%', colors=colors)
+                ax.axis('equal')
+
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+
+            elif subjects:
+                st.markdown("### 🎯 Correct vs Incorrect")
+
+                correct = data.get('correct', 0)
+                incorrect = data.get('total_questions', 0) - correct
+
+                fig, ax = plt.subplots(figsize=(6, 4))
+                ax.pie([correct, incorrect],
+                      labels=['Correct', 'Incorrect'],
+                      autopct='%1.1f%%',
+                      colors=['#4ecdc4', '#ff6b6b'])
+                ax.axis('equal')
+
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+
+    st.markdown("")  # Spacing
+
+    # Detailed error list
+    if data.get("failed_count", 0) > 0:
+        st.markdown("### ❌ Error Details")
+        error_details = data.get("error_details", {})
+
+        for err_type, count in sorted(error_types.items(), key=lambda x: -x[1]):
+            with st.expander(f"**{err_type}** ({count} errors)", expanded=False):
+                if err_type in error_details:
+                    for detail, detail_count in sorted(error_details[err_type].items(),
+                                                        key=lambda x: -x[1])[:5]:
+                        st.write(f"- [{detail_count}x] {detail[:100]}...")
+
+    # Subject details table
+    if subjects:
+        st.markdown("### 📋 Detailed Results by Subject")
+
+        table_md = "| Subject | Accuracy | Correct | Total |\n|---------|----------|---------|-------|\n"
+        for subject, stats in sorted(subjects.items(), key=lambda x: -x[1]['accuracy']):
+            table_md += f"| {subject} | {stats['accuracy'] * 100:.1f}% | {stats['correct']} | {stats['total']} |\n"
+        st.markdown(table_md)
+
+    # Category breakdown
+    categories = data.get("categories", {})
+    if categories:
+        st.markdown("### 📁 Results by Category")
+
+        cat_data = []
+        for cat, stats in sorted(categories.items()):
+            if cat != "Average":
+                cat_data.append({
+                    "Category": cat,
+                    "Accuracy": stats['accuracy'] * 100,
+                    "Correct": stats['correct'],
+                    "Total": stats['total']
+                })
+
+        if cat_data:
+            col1, col2 = st.columns([2, 1])
+
+            with col1:
+                fig, ax = plt.subplots(figsize=(8, 3))
+                cat_names = [c['Category'] for c in cat_data]
+                cat_accs = [c['Accuracy'] for c in cat_data]
+
+                colors = ['#4ecdc4' if acc >= 50 else '#ff6b6b' for acc in cat_accs]
+                bars = ax.bar(range(len(cat_names)), cat_accs, color=colors)
+                ax.set_xticks(range(len(cat_names)))
+                ax.set_xticklabels(cat_names, rotation=45, ha='right')
+                ax.set_ylabel('Accuracy (%)')
+                ax.set_ylim(0, 100)
+                ax.axhline(y=50, color='gray', linestyle='--', alpha=0.5)
+
+                for bar, acc in zip(bars, cat_accs):
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                           f'{acc:.1f}%', ha='center', va='bottom', fontsize=9)
+
+                plt.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+
+            with col2:
+                table_md = "| Category | Acc |\n|----------|-----|\n"
+                for cat in cat_data:
+                    table_md += f"| {cat['Category']} | {cat['Accuracy']:.1f}% |\n"
+                st.markdown(table_md)
+
+
+def show_load_test_detail(data: Dict):
+    """Show load test result details with charts"""
+    st.markdown("## ⚡ Load Test Details")
+
+    metrics = data.get("metrics", {})
+
+    # Key metrics
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric("QPS", f"{metrics.get('qps', 0):.2f} req/s")
+
+    with col2:
+        st.metric("TPS", f"{metrics.get('tps', 0):.2f} tok/s")
+
+    with col3:
+        st.metric("P99 Latency", f"{metrics.get('latency_p99_ms', 0):.1f} ms")
+
+    with col4:
+        st.metric("Success Rate", f"{metrics.get('success_rate', 0) * 100:.1f}%")
+
+    st.markdown("")  # Spacing
+
+    # Latency distribution
+    st.markdown("### 📊 Latency Distribution")
+
+    latency_cols = ['TTFT', 'P50', 'P90', 'P99']
+    latency_values = [
+        metrics.get('ttft_ms', 0),
+        metrics.get('latency_p50_ms', 0),
+        metrics.get('latency_p90_ms', 0),
+        metrics.get('latency_p99_ms', 0)
+    ]
+
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        bars = ax.bar(latency_cols, latency_values, color=['#3498db', '#2ecc71', '#f39c12', '#e74c3c'])
+        ax.set_ylabel('Latency (ms)')
+        ax.set_title('Latency Percentiles')
+
+        for bar, val in zip(bars, latency_values):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                   f'{val:.1f}', ha='center', va='bottom', fontsize=10)
+
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
+    with col2:
+        table_md = "| Metric | Value |\n|--------|-------|\n"
+        for i, metric in enumerate(latency_cols):
+            table_md += f"| {metric} | {latency_values[i]:.1f} ms |\n"
+        st.markdown(table_md)
+
+    st.markdown("")  # Spacing
+
+    # Success/Error breakdown
+    st.markdown("### 🎯 Success vs Error Rate")
+
+    success_rate = metrics.get('success_rate', 0)
+    error_rate = metrics.get('error_rate', 0)
+
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        fig, ax = plt.subplots(figsize=(5, 5))
+        ax.pie([success_rate * 100, error_rate * 100],
+              labels=['Success', 'Error'],
+              autopct='%1.1f%%',
+              colors=['#4ecdc4', '#ff6b6b'],
+              explode=(0.05, 0))
+        ax.set_title('Request Success Rate')
+        ax.axis('equal')
+
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
+    with col2:
+        # vLLM metrics if available
+        vllm_metrics = data.get("vllm_metrics", {})
+        if vllm_metrics:
+            st.markdown("**vLLM Metrics**")
+
+            # Create a horizontal bar chart for vLLM metrics
+            fig, ax = plt.subplots(figsize=(6, 3))
+            vllm_names = ['KV Cache\nUsage', 'GPU\nUtilization']
+            vllm_values = [
+                vllm_metrics.get('kv_cache_usage', 0) * 100,
+                vllm_metrics.get('gpu_utilization', 0) * 100
+            ]
+
+            bars = ax.barh(vllm_names, vllm_values, color=['#9b59b6', '#1abc9c'])
+            ax.set_xlim(0, 100)
+            ax.set_xlabel('Percentage (%)')
+
+            for bar, val in zip(bars, vllm_values):
+                ax.text(val + 2, bar.get_y() + bar.get_height()/2,
+                       f'{val:.1f}%', va='center', fontsize=10)
+
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+            st.metric("Avg Batch Size", f"{vllm_metrics.get('batch_size', 0):.1f}")
+        else:
+            st.info("No vLLM-specific metrics available")
+
+    # Full summary
+    st.markdown("### 📋 Complete Metrics Summary")
+
+    summary_cols = st.columns(4)
+    metrics_list = [
+        ("QPS", f"{metrics.get('qps', 0):.2f}"),
+        ("TPS", f"{metrics.get('tps', 0):.2f}"),
+        ("TTFT", f"{metrics.get('ttft_ms', 0):.1f} ms"),
+        ("P50", f"{metrics.get('latency_p50_ms', 0):.1f} ms"),
+        ("P90", f"{metrics.get('latency_p90_ms', 0):.1f} ms"),
+        ("P99", f"{metrics.get('latency_p99_ms', 0):.1f} ms"),
+        ("Success", f"{success_rate * 100:.1f}%"),
+        ("Error", f"{error_rate * 100:.1f}%"),
+    ]
+
+    for i, (name, value) in enumerate(metrics_list):
+        col_idx = i % 4
+        with summary_cols[col_idx]:
+            st.metric(name, value)
