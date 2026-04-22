@@ -52,7 +52,7 @@ def render_eval_page():
             timeout = st.slider("Timeout (s)", 10, 300, 60, key="eval_timeout")
 
         with col2:
-            rate_limit = st.number_input("Rate Limit (RPS)", min_value=0, value=0,
+            rate_limit = st.number_input("Rate Limit (RPM)", min_value=0, value=0,
                                           help="0 = unlimited", key="eval_rate_limit")
             max_samples = st.number_input("Max Samples", min_value=0, value=0,
                                            help="0 = all samples", key="eval_samples")
