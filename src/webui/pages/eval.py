@@ -309,36 +309,22 @@ def display_eval_results(report: Dict, elapsed: float):
     if subjects:
         st.markdown("#### Results by Subject")
 
-        # Convert to DataFrame for better display
-        data = []
+        # Use markdown table instead of dataframe
+        table_md = "| Subject | Accuracy | Correct |\n|---------|----------|--------|\n"
         for subject, stats in subjects.items():
-            data.append({
-                "Subject": subject,
-                "Accuracy": f"{stats['accuracy'] * 100:.1f}%",
-                "Correct": f"{stats['correct']}/{stats['total']}",
-            })
-
-        if data:
-            df = pd.DataFrame(data)
-            st.table(df)
+            table_md += f"| {subject} | {stats['accuracy'] * 100:.1f}% | {stats['correct']}/{stats['total']} |\n"
+        st.markdown(table_md)
 
     # By Category
     categories = report.get("categories", {})
     if categories:
         st.markdown("#### Results by Category")
 
-        data = []
+        table_md = "| Category | Accuracy | Correct |\n|----------|----------|--------|\n"
         for cat, stats in sorted(categories.items()):
             if cat != "Average":
-                data.append({
-                    "Category": cat,
-                    "Accuracy": f"{stats['accuracy'] * 100:.1f}%",
-                    "Correct": f"{stats['correct']}/{stats['total']}",
-                })
-
-        if data:
-            df = pd.DataFrame(data)
-            st.table(df)
+                table_md += f"| {cat} | {stats['accuracy'] * 100:.1f}% | {stats['correct']}/{stats['total']} |\n"
+        st.markdown(table_md)
 
     # Report file
     if report.get("report_file"):

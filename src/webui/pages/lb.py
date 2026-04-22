@@ -5,7 +5,6 @@ import json
 import time
 from pathlib import Path
 from typing import Dict, Optional
-import pandas as pd
 import sys
 
 # Add project root to path
@@ -279,18 +278,13 @@ def display_load_test_results(report: Dict):
 
     # Summary table
     st.markdown("#### Full Summary")
-    summary_data = {
-        "Metric": ["QPS", "TPS", "TTFT (ms)", "P50 (ms)", "P90 (ms)", "P99 (ms)", "Success Rate", "Error Rate"],
-        "Value": [
-            f"{metrics.get('qps', 0):.2f}",
-            f"{metrics.get('tps', 0):.2f}",
-            f"{metrics.get('ttft_ms', 0):.1f}",
-            f"{metrics.get('latency_p50_ms', 0):.1f}",
-            f"{metrics.get('latency_p90_ms', 0):.1f}",
-            f"{metrics.get('latency_p99_ms', 0):.1f}",
-            f"{metrics.get('success_rate', 0) * 100:.1f}%",
-            f"{metrics.get('error_rate', 0) * 100:.1f}%",
-        ]
-    }
-    df = pd.DataFrame(summary_data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    table_md = "| Metric | Value |\n|--------|-------|\n"
+    table_md += f"| QPS | {metrics.get('qps', 0):.2f} |\n"
+    table_md += f"| TPS | {metrics.get('tps', 0):.2f} |\n"
+    table_md += f"| TTFT (ms) | {metrics.get('ttft_ms', 0):.1f} |\n"
+    table_md += f"| P50 (ms) | {metrics.get('latency_p50_ms', 0):.1f} |\n"
+    table_md += f"| P90 (ms) | {metrics.get('latency_p90_ms', 0):.1f} |\n"
+    table_md += f"| P99 (ms) | {metrics.get('latency_p99_ms', 0):.1f} |\n"
+    table_md += f"| Success Rate | {metrics.get('success_rate', 0) * 100:.1f}% |\n"
+    table_md += f"| Error Rate | {metrics.get('error_rate', 0) * 100:.1f}% |\n"
+    st.markdown(table_md)

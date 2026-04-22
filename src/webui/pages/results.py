@@ -178,16 +178,11 @@ def show_eval_detail(data: Dict):
     subjects = data.get("subjects", {})
     if subjects:
         st.markdown("#### By Subject")
-        df_data = []
+        # Use markdown table instead of dataframe
+        table_md = "| Subject | Accuracy | Correct |\n|---------|----------|--------|\n"
         for subject, stats in subjects.items():
-            df_data.append({
-                "Subject": subject,
-                "Accuracy": f"{stats['accuracy'] * 100:.1f}%",
-                "Correct": f"{stats['correct']}/{stats['total']}",
-            })
-        if df_data:
-            df = pd.DataFrame(df_data)
-            st.table(df)
+            table_md += f"| {subject} | {stats['accuracy'] * 100:.1f}% | {stats['correct']}/{stats['total']} |\n"
+        st.markdown(table_md)
 
 
 def show_load_test_detail(data: Dict):
