@@ -23,7 +23,13 @@ def render_check_page():
 
     # Load providers
     providers = load_providers()
-    provider_names = ["Custom"] + [p.name for p in providers]
+
+    if not providers:
+        st.warning("No providers configured. Please add providers in Settings first.")
+        if st.button("Go to Settings"):
+            st.session_state['nav_to_settings'] = True
+            st.rerun()
+        return
 
     # Provider Selection
     with st.expander("🔑 Provider Selection", expanded=True):
@@ -32,39 +38,32 @@ def render_check_page():
         with col1:
             selected_provider_name = st.selectbox(
                 "Select Provider",
-                provider_names,
+                [p.name for p in providers],
                 key="check_provider_select",
-                help="Select a pre-configured provider or choose 'Custom' to enter settings manually"
+                help="Select a configured provider"
             )
 
         # Get selected provider
-        selected_provider = None
-        if selected_provider_name != "Custom":
-            selected_provider = next((p for p in providers if p.name == selected_provider_name), None)
+        selected_provider = next((p for p in providers if p.name == selected_provider_name), None)
 
-    # API Configuration
-    with st.expander("⚙️ API Configuration", expanded=True):
-        col1, col2 = st.columns(2)
+        if selected_provider:
+            # Show provider info
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.caption(f"**API Type:** `{selected_provider.api_type}`")
+            with col2:
+                st.caption(f"**Base URL:** `{selected_provider.base_url}`")
+            with col3:
+                st.caption(f"**Default Model:** `{selected_provider.default_model or 'Auto'}`")
 
-        with col1:
-            api_type_default = selected_provider.api_type if selected_provider else "openai"
-            api_type_index = 0 if api_type_default == "openai" else 1
-            api_type = st.selectbox("API Type", ["openai", "anthropic"],
-                                     index=api_type_index, key="check_api_type")
-
-            base_url_default = selected_provider.base_url if selected_provider else "https://api.openai.com/v1"
-            api_base_url = st.text_input(
-                "API Base URL",
-                value=base_url_default,
-                key="check_api_url"
+            # Allow model override
+            model = st.text_input(
+                "Model (override)",
+                value=selected_provider.default_model,
+                key="check_model",
+                help="Leave as default or enter a different model name"
             )
 
-            model_default = selected_provider.default_model if selected_provider else "gpt-4"
-            model = st.text_input("Model Name", value=model_default, key="check_model")
-
-        with col2:
-            api_key_default = selected_provider.api_key if selected_provider else ""
-            api_key = st.text_input("API Key", value=api_key_default, type="password", key="check_api_key")
             timeout = st.slider("Timeout (seconds)", 10, 300, 60, key="check_timeout")
 
     # Test cases
@@ -72,20 +71,20 @@ def render_check_page():
     st.caption("Tests basic math, knowledge, logic, coding, and Chinese capabilities.")
 
     if st.button("🚀 Run Check", type="primary", use_container_width=True):
-        if not api_key:
-            st.error("Please enter API Key")
+        if not selected_provider:
+            st.error("No provider selected")
             return
 
-        if not api_base_url:
-            st.error("Please enter API Base URL")
+        if not selected_provider.api_key:
+            st.error(f"Provider '{selected_provider.name}' has no API key configured")
             return
 
         # Run tests
         results = run_capability_check(
-            api_type=api_type,
+            api_type=selected_provider.api_type,
             model=model,
-            api_base_url=api_base_url,
-            api_key=api_key,
+            api_base_url=selected_provider.base_url,
+            api_key=selected_provider.api_key,
             timeout=timeout
         )
 

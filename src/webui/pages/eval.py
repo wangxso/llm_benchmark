@@ -26,61 +26,52 @@ def render_eval_page():
 
     # Load providers
     providers = load_providers()
-    provider_names = ["Custom"] + [p.name for p in providers]
 
-    # Configuration
-    with st.expander("⚙️ Configuration", expanded=True):
-        # Provider Selection
-        st.markdown("#### Provider Selection")
+    if not providers:
+        st.warning("No providers configured. Please add providers in Settings first.")
+        if st.button("Go to Settings"):
+            st.session_state['nav_to_settings'] = True
+            st.rerun()
+        return
+
+    # Provider Selection
+    with st.expander("🔑 Provider Selection", expanded=True):
         col1, col2 = st.columns([1, 3])
 
         with col1:
             selected_provider_name = st.selectbox(
                 "Select Provider",
-                provider_names,
+                [p.name for p in providers],
                 key="eval_provider_select",
-                help="Select a pre-configured provider or choose 'Custom' to enter settings manually"
+                help="Select a configured provider"
             )
 
         # Get selected provider
-        selected_provider = None
-        if selected_provider_name != "Custom":
-            selected_provider = next((p for p in providers if p.name == selected_provider_name), None)
+        selected_provider = next((p for p in providers if p.name == selected_provider_name), None)
 
-        # API Settings
-        st.markdown("#### API Settings")
-        col1, col2 = st.columns(2)
+        if selected_provider:
+            # Show provider info
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.caption(f"**API Type:** `{selected_provider.api_type}`")
+            with col2:
+                st.caption(f"**Base URL:** `{selected_provider.base_url}`")
+            with col3:
+                st.caption(f"**Default Model:** `{selected_provider.default_model or 'Auto'}`")
 
-        with col1:
-            # API Type - auto-fill from provider
-            api_type_default = selected_provider.api_type if selected_provider else "openai"
-            api_type_index = 0 if api_type_default == "openai" else 1
-            api_type = st.selectbox("API Type", ["openai", "anthropic"],
-                                     index=api_type_index, key="eval_api_type")
-
-            # Base URL - auto-fill from provider
-            base_url_default = selected_provider.base_url if selected_provider else "https://api.openai.com/v1"
-            api_base_url = st.text_input(
-                "API Base URL",
-                value=base_url_default,
-                key="eval_api_url",
-                help="e.g., https://api.openai.com/v1 or https://api.minimaxi.com/anthropic"
+            # Allow model override
+            model = st.text_input(
+                "Model (override)",
+                value=selected_provider.default_model,
+                key="eval_model",
+                help="Leave as default or enter a different model name"
             )
 
-            # Model - auto-fill from provider
-            model_default = selected_provider.default_model if selected_provider else "gpt-4"
-            model = st.text_input("Model Name", value=model_default, key="eval_model")
+    # HF Token (optional)
+    hf_token = st.text_input("HuggingFace Token (for gated datasets)", type="password", key="eval_hf_token")
 
-        with col2:
-            # API Key - auto-fill from provider
-            api_key_default = selected_provider.api_key if selected_provider else ""
-            api_key = st.text_input("API Key", value=api_key_default, type="password", key="eval_api_key")
-
-            hf_token = st.text_input("HuggingFace Token", type="password", key="eval_hf_token",
-                                       help="Required for gated datasets like GPQA")
-
-        # Request Settings
-        st.markdown("#### Request Settings")
+    # Request Settings
+    with st.expander("⚙️ Request Settings", expanded=False):
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -148,23 +139,24 @@ def render_eval_page():
     st.markdown("---")
 
     if st.button("🚀 Run Evaluation", type="primary", use_container_width=True):
-        # Validate
-        if not api_key:
-            st.error("Please enter API Key")
+        if not selected_provider:
+            st.error("No provider selected")
             return
-        if not api_base_url:
-            st.error("Please enter API Base URL")
+
+        if not selected_provider.api_key:
+            st.error(f"Provider '{selected_provider.name}' has no API key configured")
             return
+
         if not model:
-            st.error("Please enter Model Name")
+            st.error("Please enter a model name")
             return
 
         # Run evaluation
         run_evaluation(
             benchmark_name=selected_benchmark,
-            api_type=api_type,
-            api_base_url=api_base_url,
-            api_key=api_key,
+            api_type=selected_provider.api_type,
+            api_base_url=selected_provider.base_url,
+            api_key=selected_provider.api_key,
             model=model,
             hf_token=hf_token if hf_token else None,
             concurrency=concurrency,
@@ -202,7 +194,6 @@ def run_evaluation(
 
         progress_bar = st.progress(0)
         status_text = st.empty()
-        metrics_text = st.empty()
 
         try:
             # Load benchmark
@@ -267,33 +258,6 @@ def run_eval_with_progress(
 ) -> Dict:
     """Run evaluation with UI progress updates"""
 
-    # Import needed modules
-    import asyncio
-    from tqdm.asyncio import tqdm_asyncio
-
-    # Monkey patch tqdm to update streamlit progress
-    original_tqdm = tqdm_asyncio
-
-    class StreamlitTqdm:
-        def __init__(self, *args, **kwargs):
-            self.total = kwargs.get('total', 100)
-            self.count = 0
-
-        def update(self, n=1):
-            self.count += n
-            if self.total > 0:
-                progress = min(self.count / self.total, 1.0)
-                progress_bar.progress(progress)
-
-        def close(self):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            self.close()
-
     # Run the evaluation
     report = runner.run(
         prompt_style=prompt_style,
@@ -309,20 +273,23 @@ def display_eval_results(report: Dict, elapsed: float):
 
     st.success(f"✅ Evaluation completed in {elapsed:.1f}s")
 
-    # Key metrics
+    # Key metrics - now shows attempted vs successful
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.metric("Accuracy", f"{report.get('overall_accuracy', 0) * 100:.2f}%")
+        accuracy = report.get('overall_accuracy', 0) * 100
+        st.metric("Accuracy", f"{accuracy:.2f}%")
 
     with col2:
         correct = report.get('correct', 0)
         total = report.get('total_questions', 0)
-        st.metric("Correct", f"{correct}/{total}")
+        successful = report.get('successful_count', total)
+        st.metric("Correct", f"{correct}/{successful}")
 
     with col3:
+        attempted = report.get('attempted_count', total)
         failed = report.get('failed_count', 0)
-        st.metric("Failed", failed)
+        st.metric("Success/Failed", f"{successful}/{failed}")
 
     with col4:
         model = report.get('model', 'unknown')

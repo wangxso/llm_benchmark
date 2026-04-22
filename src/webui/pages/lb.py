@@ -21,7 +21,13 @@ def render_lb_page():
 
     # Load providers
     providers = load_providers()
-    provider_names = ["Custom"] + [p.name for p in providers]
+
+    if not providers:
+        st.warning("No providers configured. Please add providers in Settings first.")
+        if st.button("Go to Settings"):
+            st.session_state['nav_to_settings'] = True
+            st.rerun()
+        return
 
     # Provider Selection
     with st.expander("🔑 Provider Selection", expanded=True):
@@ -30,40 +36,32 @@ def render_lb_page():
         with col1:
             selected_provider_name = st.selectbox(
                 "Select Provider",
-                provider_names,
+                [p.name for p in providers],
                 key="lb_provider_select",
-                help="Select a pre-configured provider or choose 'Custom' to enter settings manually"
+                help="Select a configured provider"
             )
 
         # Get selected provider
-        selected_provider = None
-        if selected_provider_name != "Custom":
-            selected_provider = next((p for p in providers if p.name == selected_provider_name), None)
+        selected_provider = next((p for p in providers if p.name == selected_provider_name), None)
 
-    # API Settings
-    with st.expander("⚙️ API Settings", expanded=True):
-        col1, col2 = st.columns(2)
+        if selected_provider:
+            # Show provider info
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.caption(f"**API Type:** `{selected_provider.api_type}`")
+            with col2:
+                st.caption(f"**Base URL:** `{selected_provider.base_url}`")
+            with col3:
+                st.caption(f"**Default Model:** `{selected_provider.default_model or 'Auto'}`")
 
-        with col1:
-            api_type_default = selected_provider.api_type if selected_provider else "openai"
-            api_type_index = 0 if api_type_default == "openai" else 1
-            api_type = st.selectbox("API Type", ["openai", "anthropic"],
-                                     index=api_type_index, key="lb_api_type")
-
-            base_url_default = selected_provider.base_url if selected_provider else "http://localhost:8000/v1"
-            api_base_url = st.text_input(
-                "API Base URL",
-                value=base_url_default,
-                key="lb_api_url",
-                help="vLLM or OpenAI-compatible API endpoint"
+            # Allow model override
+            model = st.text_input(
+                "Model (override)",
+                value=selected_provider.default_model,
+                key="lb_model",
+                help="Leave as default or enter a different model name"
             )
 
-            model_default = selected_provider.default_model if selected_provider else ""
-            model = st.text_input("Model Name", value=model_default, key="lb_model")
-
-        with col2:
-            api_key_default = selected_provider.api_key if selected_provider else ""
-            api_key = st.text_input("API Key", value=api_key_default, type="password", key="lb_api_key")
             stream = st.checkbox("Streaming", value=False, key="lb_stream")
 
     # Load Test Configuration
@@ -97,7 +95,6 @@ def render_lb_page():
                 peak = st.number_input("Peak Concurrency", min_value=1, value=500, key="lb_peak")
                 warmup = st.number_input("Warmup Duration (s)", min_value=0, value=30, key="lb_warmup")
             else:
-                # Show info for other scenarios
                 st.info("Configure additional parameters based on scenario type")
 
             max_tokens = st.number_input(
@@ -107,7 +104,6 @@ def render_lb_page():
             )
 
         with col3:
-            # Dataset configuration
             dataset_mode = st.selectbox(
                 "Prompt Source",
                 ["generate", "import"],
@@ -132,15 +128,19 @@ def render_lb_page():
     st.markdown("---")
 
     if st.button("🚀 Run Load Test", type="primary", use_container_width=True):
-        if not api_base_url:
-            st.error("Please enter API Base URL")
+        if not selected_provider:
+            st.error("No provider selected")
+            return
+
+        if not selected_provider.api_key:
+            st.error(f"Provider '{selected_provider.name}' has no API key configured")
             return
 
         run_load_test(
-            api_base_url=api_base_url,
+            api_base_url=selected_provider.base_url,
             model=model,
-            api_key=api_key if api_key else None,
-            api_type=api_type,
+            api_key=selected_provider.api_key,
+            api_type=selected_provider.api_type,
             stream=stream,
             scenario=scenario,
             base_concurrency=base_concurrency,

@@ -338,11 +338,17 @@ class EvalRunner:
                 result = await f
                 results.append(result)
 
-        # Calculate metrics
-        metrics = score_results([r for r in results if r.get("success")])
+        # Separate successful and failed results
+        successful_results = [r for r in results if r.get("success")]
+        failed_results = [r for r in results if not r.get("success")]
+
+        # Calculate metrics only from successful results
+        metrics = score_results(successful_results)
 
         # Calculate error statistics with detailed reasons
-        failed_count = sum(1 for r in results if not r.get("success"))
+        attempted_count = len(results)
+        successful_count = len(successful_results)
+        failed_count = len(failed_results)
         error_types = {}
         error_details = {}  # Store detailed error messages
 
@@ -388,7 +394,7 @@ class EvalRunner:
         if category_map:
             from .scorer import score_results_with_categories
             metrics_with_cat = score_results_with_categories(
-                [r for r in results if r.get("success")],
+                successful_results,
                 category_map=category_map,
             )
             metrics["categories"] = metrics_with_cat.get("categories", {})
@@ -397,12 +403,14 @@ class EvalRunner:
             "benchmark": self.benchmark.name,
             "model": self.model,
             "prompt_style": prompt_style,
+            "attempted_count": attempted_count,
+            "successful_count": successful_count,
+            "failed_count": failed_count,
             "overall_accuracy": metrics["overall_accuracy"],
             "total_questions": metrics["total_questions"],
             "correct": metrics["correct"],
             "subjects": metrics["subjects"],
             "categories": metrics.get("categories", {}),
-            "failed_count": failed_count,
             "error_types": error_types,
             "error_details": error_details,
             "timestamp": datetime.now().isoformat(),
