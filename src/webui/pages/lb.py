@@ -12,27 +12,58 @@ project_root = Path(__file__).parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
+from src.webui.pages.providers import load_providers, Provider
+
 
 def render_lb_page():
     st.header("⚡ Load Testing")
     st.markdown("Run load tests against your LLM API endpoints.")
+
+    # Load providers
+    providers = load_providers()
+    provider_names = ["Custom"] + [p.name for p in providers]
+
+    # Provider Selection
+    with st.expander("🔑 Provider Selection", expanded=True):
+        col1, col2 = st.columns([1, 3])
+
+        with col1:
+            selected_provider_name = st.selectbox(
+                "Select Provider",
+                provider_names,
+                key="lb_provider_select",
+                help="Select a pre-configured provider or choose 'Custom' to enter settings manually"
+            )
+
+        # Get selected provider
+        selected_provider = None
+        if selected_provider_name != "Custom":
+            selected_provider = next((p for p in providers if p.name == selected_provider_name), None)
 
     # API Settings
     with st.expander("⚙️ API Settings", expanded=True):
         col1, col2 = st.columns(2)
 
         with col1:
+            api_type_default = selected_provider.api_type if selected_provider else "openai"
+            api_type_index = 0 if api_type_default == "openai" else 1
+            api_type = st.selectbox("API Type", ["openai", "anthropic"],
+                                     index=api_type_index, key="lb_api_type")
+
+            base_url_default = selected_provider.base_url if selected_provider else "http://localhost:8000/v1"
             api_base_url = st.text_input(
                 "API Base URL",
-                value="http://localhost:8000/v1",
+                value=base_url_default,
                 key="lb_api_url",
                 help="vLLM or OpenAI-compatible API endpoint"
             )
-            model = st.text_input("Model Name", value="", key="lb_model")
-            api_key = st.text_input("API Key", type="password", key="lb_api_key")
+
+            model_default = selected_provider.default_model if selected_provider else ""
+            model = st.text_input("Model Name", value=model_default, key="lb_model")
 
         with col2:
-            api_type = st.selectbox("API Type", ["openai", "anthropic"], key="lb_api_type")
+            api_key_default = selected_provider.api_key if selected_provider else ""
+            api_key = st.text_input("API Key", value=api_key_default, type="password", key="lb_api_key")
             stream = st.checkbox("Streaming", value=False, key="lb_stream")
 
     # Load Test Configuration

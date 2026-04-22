@@ -6,27 +6,65 @@ import aiohttp
 import json
 from typing import List, Dict
 import time
+import sys
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).parent.parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from src.webui.pages.providers import load_providers, Provider
 
 
 def render_check_page():
     st.header("🔍 Model Capability Check")
     st.markdown("Quick test to verify model is working and not degraded.")
 
-    # Sidebar for API configuration
+    # Load providers
+    providers = load_providers()
+    provider_names = ["Custom"] + [p.name for p in providers]
+
+    # Provider Selection
+    with st.expander("🔑 Provider Selection", expanded=True):
+        col1, col2 = st.columns([1, 3])
+
+        with col1:
+            selected_provider_name = st.selectbox(
+                "Select Provider",
+                provider_names,
+                key="check_provider_select",
+                help="Select a pre-configured provider or choose 'Custom' to enter settings manually"
+            )
+
+        # Get selected provider
+        selected_provider = None
+        if selected_provider_name != "Custom":
+            selected_provider = next((p for p in providers if p.name == selected_provider_name), None)
+
+    # API Configuration
     with st.expander("⚙️ API Configuration", expanded=True):
         col1, col2 = st.columns(2)
 
         with col1:
-            api_type = st.selectbox("API Type", ["openai", "anthropic"], key="check_api_type")
-            model = st.text_input("Model Name", value="gpt-4", key="check_model")
+            api_type_default = selected_provider.api_type if selected_provider else "openai"
+            api_type_index = 0 if api_type_default == "openai" else 1
+            api_type = st.selectbox("API Type", ["openai", "anthropic"],
+                                     index=api_type_index, key="check_api_type")
+
+            base_url_default = selected_provider.base_url if selected_provider else "https://api.openai.com/v1"
             api_base_url = st.text_input(
                 "API Base URL",
-                value="https://api.openai.com/v1",
+                value=base_url_default,
                 key="check_api_url"
             )
 
+            model_default = selected_provider.default_model if selected_provider else "gpt-4"
+            model = st.text_input("Model Name", value=model_default, key="check_model")
+
         with col2:
-            api_key = st.text_input("API Key", type="password", key="check_api_key")
+            api_key_default = selected_provider.api_key if selected_provider else ""
+            api_key = st.text_input("API Key", value=api_key_default, type="password", key="check_api_key")
             timeout = st.slider("Timeout (seconds)", 10, 300, 60, key="check_timeout")
 
     # Test cases

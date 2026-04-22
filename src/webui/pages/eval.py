@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import pandas as pd
 import sys
+import os
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -16,30 +17,65 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.eval import get_benchmark, list_benchmarks, EvalRunner
+from src.webui.pages.providers import load_providers, Provider
 
 
 def render_eval_page():
     st.header("📊 Benchmark Evaluation")
     st.markdown("Run benchmark evaluations on your models.")
 
+    # Load providers
+    providers = load_providers()
+    provider_names = ["Custom"] + [p.name for p in providers]
+
     # Configuration
     with st.expander("⚙️ Configuration", expanded=True):
+        # Provider Selection
+        st.markdown("#### Provider Selection")
+        col1, col2 = st.columns([1, 3])
+
+        with col1:
+            selected_provider_name = st.selectbox(
+                "Select Provider",
+                provider_names,
+                key="eval_provider_select",
+                help="Select a pre-configured provider or choose 'Custom' to enter settings manually"
+            )
+
+        # Get selected provider
+        selected_provider = None
+        if selected_provider_name != "Custom":
+            selected_provider = next((p for p in providers if p.name == selected_provider_name), None)
+
         # API Settings
         st.markdown("#### API Settings")
         col1, col2 = st.columns(2)
 
         with col1:
-            api_type = st.selectbox("API Type", ["openai", "anthropic"], key="eval_api_type")
+            # API Type - auto-fill from provider
+            api_type_default = selected_provider.api_type if selected_provider else "openai"
+            api_type_index = 0 if api_type_default == "openai" else 1
+            api_type = st.selectbox("API Type", ["openai", "anthropic"],
+                                     index=api_type_index, key="eval_api_type")
+
+            # Base URL - auto-fill from provider
+            base_url_default = selected_provider.base_url if selected_provider else "https://api.openai.com/v1"
             api_base_url = st.text_input(
                 "API Base URL",
-                value="https://api.openai.com/v1",
+                value=base_url_default,
                 key="eval_api_url",
                 help="e.g., https://api.openai.com/v1 or https://api.minimaxi.com/anthropic"
             )
-            model = st.text_input("Model Name", value="gpt-4", key="eval_model")
+
+            # Model - auto-fill from provider
+            model_default = selected_provider.default_model if selected_provider else "gpt-4"
+            model = st.text_input("Model Name", value=model_default, key="eval_model")
 
         with col2:
-            api_key = st.text_input("API Key", type="password", key="eval_api_key")
+            # API Key - auto-fill from provider
+            api_key_default = selected_provider.api_key if selected_provider else ""
+            api_key = st.text_input("API Key", value=api_key_default, type="password", key="eval_api_key")
+
             hf_token = st.text_input("HuggingFace Token", type="password", key="eval_hf_token",
                                        help="Required for gated datasets like GPQA")
 
