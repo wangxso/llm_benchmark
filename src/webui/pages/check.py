@@ -1,0 +1,251 @@
+"""Model capability check page"""
+
+import streamlit as st
+import asyncio
+import aiohttp
+import json
+from typing import List, Dict
+import time
+
+
+def render_check_page():
+    st.header("🔍 Model Capability Check")
+    st.markdown("Quick test to verify model is working and not degraded.")
+
+    # Sidebar for API configuration
+    with st.expander("⚙️ API Configuration", expanded=True):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            api_type = st.selectbox("API Type", ["openai", "anthropic"], key="check_api_type")
+            model = st.text_input("Model Name", value="gpt-4", key="check_model")
+            api_base_url = st.text_input(
+                "API Base URL",
+                value="https://api.openai.com/v1",
+                key="check_api_url"
+            )
+
+        with col2:
+            api_key = st.text_input("API Key", type="password", key="check_api_key")
+            timeout = st.slider("Timeout (seconds)", 10, 300, 60, key="check_timeout")
+
+    # Test cases
+    st.markdown("### Test Cases")
+    st.caption("Tests basic math, knowledge, logic, coding, and Chinese capabilities.")
+
+    if st.button("🚀 Run Check", type="primary", use_container_width=True):
+        if not api_key:
+            st.error("Please enter API Key")
+            return
+
+        if not api_base_url:
+            st.error("Please enter API Base URL")
+            return
+
+        # Run tests
+        results = run_capability_check(
+            api_type=api_type,
+            model=model,
+            api_base_url=api_base_url,
+            api_key=api_key,
+            timeout=timeout
+        )
+
+        # Display results
+        st.markdown("---")
+        display_check_results(results)
+
+
+def run_capability_check(
+    api_type: str,
+    model: str,
+    api_base_url: str,
+    api_key: str,
+    timeout: int
+) -> List[Dict]:
+    """Run capability check tests"""
+
+    tests = [
+        {
+            "name": "Simple Math",
+            "emoji": "🔢",
+            "prompt": "What is 15 + 27? Answer with just the number.",
+            "check": lambda r: "42" in r,
+        },
+        {
+            "name": "Basic Knowledge",
+            "emoji": "🌍",
+            "prompt": "What is the capital of France? Answer with just the city name.",
+            "check": lambda r: "paris" in r.lower(),
+        },
+        {
+            "name": "Logic Reasoning",
+            "emoji": "🧠",
+            "prompt": "If all cats are mammals, and Tom is a cat, is Tom a mammal? Answer yes or no.",
+            "check": lambda r: "yes" in r.lower(),
+        },
+        {
+            "name": "Code Ability",
+            "emoji": "💻",
+            "prompt": "Write a Python function to calculate factorial. Just output the function code, no explanation.",
+            "check": lambda r: "def " in r and "factorial" in r.lower(),
+        },
+        {
+            "name": "Chinese",
+            "emoji": "🀄",
+            "prompt": "用中文回答：1+1等于几？只回答数字。",
+            "check": lambda r: "2" in r or "二" in r,
+        },
+    ]
+
+    # Prepare headers and URL
+    base_url = api_base_url.rstrip("/")
+
+    if api_type == "anthropic":
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        if base_url.endswith("/anthropic"):
+            url = f"{base_url}/v1/messages"
+        else:
+            url = f"{base_url}/messages" if not base_url.endswith("/messages") else base_url
+    else:
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+        url = f"{base_url}/chat/completions"
+
+    results = []
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    for i, test in enumerate(tests):
+        status_text.text(f"Testing: {test['name']}...")
+
+        try:
+            response_text = asyncio.run(send_request(
+                url=url,
+                headers=headers,
+                prompt=test["prompt"],
+                model=model,
+                api_type=api_type,
+                timeout=timeout
+            ))
+
+            passed = test["check"](response_text)
+            results.append({
+                "name": test["name"],
+                "emoji": test["emoji"],
+                "passed": passed,
+                "response": response_text[:200] + "..." if len(response_text) > 200 else response_text,
+            })
+        except Exception as e:
+            results.append({
+                "name": test["name"],
+                "emoji": test["emoji"],
+                "passed": False,
+                "error": str(e)[:100],
+            })
+
+        progress_bar.progress((i + 1) / len(tests))
+
+    progress_bar.empty()
+    status_text.empty()
+
+    return results
+
+
+async def send_request(
+    url: str,
+    headers: Dict,
+    prompt: str,
+    model: str,
+    api_type: str,
+    timeout: int
+) -> str:
+    """Send a single request to the API"""
+
+    async with aiohttp.ClientSession() as session:
+        if api_type == "anthropic":
+            payload = {
+                "model": model,
+                "max_tokens": 500,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+        else:
+            payload = {
+                "model": model,
+                "max_tokens": 500,
+                "temperature": 0.0,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+
+        async with session.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                try:
+                    err_data = json.loads(text)
+                    detail = err_data.get("error", {}).get("message", text[:100])
+                except:
+                    detail = text[:100]
+                raise Exception(f"HTTP {resp.status}: {detail}")
+
+            data = await resp.json()
+
+            if api_type == "anthropic":
+                content = data.get("content", [{}])[0].get("text", "") if isinstance(data.get("content"), list) else data.get("content", "")
+            else:
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+            return content
+
+
+def display_check_results(results: List[Dict]):
+    """Display check results"""
+    passed = sum(1 for r in results if r["passed"])
+    total = len(results)
+    pass_rate = passed / total * 100 if total > 0 else 0
+
+    # Summary metrics
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric("Passed", f"{passed}/{total}")
+    with col2:
+        st.metric("Pass Rate", f"{pass_rate:.0f}%")
+    with col3:
+        if pass_rate >= 80:
+            st.metric("Verdict", "✅ Normal", delta_color="normal")
+        elif pass_rate >= 40:
+            st.metric("Verdict", "⚠️ Partial", delta_color="off")
+        else:
+            st.metric("Verdict", "❌ Degraded", delta_color="inverse")
+
+    # Detailed results
+    st.markdown("### Test Results")
+
+    for r in results:
+        with st.container():
+            col1, col2 = st.columns([1, 4])
+
+            with col1:
+                if r["passed"]:
+                    st.success(f"✅ {r['emoji']} {r['name']}")
+                else:
+                    st.error(f"❌ {r['emoji']} {r['name']}")
+
+            with col2:
+                if r["passed"]:
+                    st.text(r.get("response", "N/A"))
+                else:
+                    st.text(r.get("error", r.get("response", "Unknown")))
+
+            st.divider()
