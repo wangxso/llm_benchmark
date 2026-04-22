@@ -30,49 +30,58 @@ def render_results_page():
         st.info("No results found. Run some evaluations or load tests first.")
         return
 
-    # Filter by type
-    col1, col2 = st.columns([1, 3])
+    # Create tabs for List and Detail views
+    tab_list, tab_detail = st.tabs(["📋 Results List", "📊 Result Detail"])
 
-    with col1:
-        result_type = st.selectbox(
-            "Result Type",
-            ["All", "Evaluation", "Load Test"],
-            key="results_type_filter"
-        )
+    with tab_list:
+        # Filter by type
+        col1, col2 = st.columns([1, 3])
 
-    with col2:
-        # Search/filter
-        search = st.text_input("Search", placeholder="Filter by model, benchmark...", key="results_search")
+        with col1:
+            result_type = st.selectbox(
+                "Result Type",
+                ["All", "Evaluation", "Load Test"],
+                key="results_type_filter"
+            )
 
-    # Filter results
-    filtered_files = filter_results(result_files, result_type, search)
+        with col2:
+            search = st.text_input("Search", placeholder="Filter by model, benchmark...", key="results_search")
 
-    st.markdown(f"**Found {len(filtered_files)} results**")
+        # Filter results
+        filtered_files = filter_results(result_files, result_type, search)
 
-    # Display results list
-    for file_info in filtered_files[:20]:  # Limit to 20 results
-        with st.container():
-            col1, col2, col3 = st.columns([2, 2, 1])
+        st.markdown(f"**Found {len(filtered_files)} results**")
+
+        # Display results in a more compact table format
+        for file_info in filtered_files[:20]:
+            col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
 
             with col1:
                 st.markdown(f"**{file_info['name']}**")
-                st.caption(f"📅 {file_info['timestamp']}")
 
             with col2:
-                st.text(file_info['type'])
-                if file_info.get('model'):
-                    st.caption(f"Model: {file_info['model']}")
+                st.caption(file_info['type'])
 
             with col3:
-                if st.button("View", key=f"view_{file_info['path']}"):
+                if file_info.get('model'):
+                    st.caption(f"🤖 {file_info['model']}")
+                st.caption(f"📅 {file_info['timestamp'][:16] if file_info.get('timestamp') else 'N/A'}")
+
+            with col4:
+                if st.button("📊 View", key=f"view_{file_info['path']}"):
                     st.session_state['selected_result'] = file_info['path']
+                    st.rerun()
 
-            st.divider()
+    with tab_detail:
+        if 'selected_result' in st.session_state and st.session_state['selected_result']:
+            # Clear button
+            if st.button("⬅️ Back to List"):
+                st.session_state['selected_result'] = None
+                st.rerun()
 
-    # Show selected result detail
-    if 'selected_result' in st.session_state and st.session_state['selected_result']:
-        st.markdown("---")
-        show_result_detail(st.session_state['selected_result'])
+            show_result_detail(st.session_state['selected_result'])
+        else:
+            st.info("👈 Select a result from the 'Results List' tab to view details")
 
 
 def scan_results(results_dir: str) -> List[Dict]:
