@@ -9,9 +9,20 @@ class OpenAIClient:
 
     def __init__(self, config: Dict):
         self.config = config
-        self.host = config.get("vllm", {}).get("host", "localhost")
-        self.port = config.get("vllm", {}).get("port", 8000)
-        self.base_url = f"http://{self.host}:{self.port}/v1"
+
+        # Support direct base_url or fall back to host/port
+        self.base_url = config.get("vllm", {}).get("base_url")
+        if self.base_url:
+            # Remove trailing /v1 if present (we'll add it back)
+            self.base_url = self.base_url.rstrip("/").rstrip("/v1")
+            # Extract host and port for health checks
+            parts = self.base_url.replace("http://", "").replace("https://", "").split(":")
+            self.host = parts[0]
+            self.port = int(parts[1]) if len(parts) > 1 else (443 if self.base_url.startswith("https") else 80)
+        else:
+            self.host = config.get("vllm", {}).get("host", "localhost")
+            self.port = config.get("vllm", {}).get("port", 8000)
+            self.base_url = f"http://{self.host}:{self.port}"
 
         self.timeout = config.get("request", {}).get("timeout", 120)
 
@@ -33,7 +44,7 @@ class OpenAIClient:
         """Send a non-streaming request"""
         session = await self._get_session()
 
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url}/v1/chat/completions"
 
         timeout_val = timeout or self.timeout
 

@@ -180,8 +180,7 @@ def run_load_test(
     # Build config from UI inputs
     config = {
         "vllm": {
-            "host": api_base_url.rstrip("/").split("//")[1].split("/")[0].split(":")[0] if "://" in api_base_url else "localhost",
-            "port": int(api_base_url.rstrip("/").split("//")[1].split("/")[0].split(":")[-1]) if ":" in api_base_url.split("//")[-1].split("/")[0] else 8000,
+            "base_url": api_base_url.rstrip("/").rstrip("/v1"),  # Let client handle /v1
             "model": model,
         },
         "load": {
