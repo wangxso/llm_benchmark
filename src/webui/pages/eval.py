@@ -124,8 +124,10 @@ def render_eval_page():
     with col2:
         prompt_style = st.selectbox(
             "Prompt Style",
-            ["zero_shot", "few_shot", "cot", "zero_shot_cn", "few_shot_cn", "cot_cn"],
-            key="eval_prompt_style"
+            ["cot", "mmlu_pro", "zero_shot", "few_shot", "zero_shot_cn", "few_shot_cn", "cot_cn"],
+            index=0,  # Default to COT
+            key="eval_prompt_style",
+            help="COT/MMLU_Pro: Think step by step, output 'The answer is (X)'"
         )
 
     # Show benchmark info

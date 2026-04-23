@@ -236,6 +236,7 @@ class EvalRunner:
                 item["question"],
                 item["choices"],
                 style=prompt_style,
+                category=item.get("subject", ""),
             )
 
             result = await self._send_request(session, prompt)

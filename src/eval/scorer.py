@@ -1,73 +1,73 @@
-"""Answer extraction and scoring utilities"""
+"""Answer extraction and scoring utilities - aligned with official MMLU-Pro evaluator"""
 
 import re
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 
 
-def extract_answer(response: str, num_options: int = 10) -> Optional[str]:
-    """Extract answer letter from model response
+def extract_answer(text: str, num_options: int = 10) -> Optional[str]:
+    """Extract answer letter using official MMLU-Pro extraction logic
 
-    Supports multiple formats:
-    - Single letter: "A", "B", "C", "D", etc. (up to num_options)
-    - With parentheses: "(A)", "[A]"
-    - With word: "Answer: A", "The answer is A", "ANSWER: A"
-    - Chinese: "答案是A", "答案：A", "选择A"
-    - With dash: "——A", "-A"
+    Priority:
+    1. Match "answer is (X)" or "answer is X" (case insensitive)
+    2. Match "Answer: X" or "answer: X"
+    3. Find last standalone letter A-J in text
 
     Args:
-        response: Model response text
+        text: Model response text
         num_options: Maximum number of options (default 10 for A-J)
 
     Returns:
         Answer letter or None if not found
     """
-    if not response:
+    if not text:
         return None
 
-    response = response.strip().upper()
-
     # Build valid option letters
-    valid_letters = "".join(chr(ord("A") + i) for i in range(num_options))
+    valid_letters = set(chr(ord("A") + i) for i in range(num_options))
 
-    # Try direct single letter match first
-    if response in list(valid_letters):
-        return response
+    # Level 1: Match "answer is (X)" or "answer is X"
+    pattern = r"answer is \(?([A-J])\)?"
+    match = re.search(pattern, text, re.IGNORECASE)
+    if match:
+        letter = match.group(1).upper()
+        if letter in valid_letters:
+            return letter
 
-    # Pattern priority: more specific patterns first
-    option_pattern = f"[A-{valid_letters[-1]}]"
-    patterns = [
-        # "Answer: A" or "ANSWER: A" patterns
-        r"(?:ANSWER|ANS)\s*[:：]\s*(" + option_pattern + ")",
-        r"(?:THE\s+)?ANSWER\s+IS\s+(" + option_pattern + ")",
-        # Chinese patterns: 答案是A, 答案：A, 答案： A
-        r"答案\s*(?:是)?\s*[:：]?\s*(" + option_pattern + ")",
-        r"选\s*[:：]?\s*(" + option_pattern + ")",
-        # Dash patterns: ——A, -A (Chinese and ASCII dashes)
-        r"[—─\-]{1,3}\s*(" + option_pattern + ")(?:\s|$)",
-        # Parentheses/brackets: (A) [A] 【A】
-        r"[【\(\[](" + option_pattern + ")[】\)\]]",
-        # "最终答案：A" or similar
-        r"最终\s*答案\s*[:：]?\s*(" + option_pattern + ")",
-        # Letter at end of response with possible punctuation
-        r"(" + option_pattern + r")\s*[\.。！!]?\s*$",
-        # Letter after newline or space near end
-        r"[\n\s](" + option_pattern + r")\s*$",
-        # Any single letter as last resort (but must be standalone)
-        r"\b(" + option_pattern + r")\b",
-    ]
+    # Level 2: Match "Answer: X" or "answer: X"
+    match = re.search(r'.*[aA]nswer:\s*([A-J])', text)
+    if match:
+        letter = match.group(1).upper()
+        if letter in valid_letters:
+            return letter
 
-    for pattern in patterns:
-        try:
-            match = re.search(pattern, response)
-            if match:
-                letter = match.group(1)
-                if letter in valid_letters:
-                    return letter
-        except:
-            continue
+    # Level 3: Find last standalone letter A-J (official fallback)
+    pattern = r"\b[A-J]\b(?!.*\b[A-J]\b)"
+    match = re.search(pattern, text, re.DOTALL)
+    if match:
+        letter = match.group(0).upper()
+        if letter in valid_letters:
+            return letter
 
     return None
+
+
+def extract_answer_with_fallback(text: str, num_options: int = 10) -> str:
+    """Extract answer, use random choice if extraction fails
+
+    Args:
+        text: Model response text
+        num_options: Number of options for random fallback
+
+    Returns:
+        Answer letter (never None)
+    """
+    import random
+    result = extract_answer(text, num_options)
+    if result is None:
+        # Random choice as fallback
+        return random.choice([chr(ord("A") + i) for i in range(num_options)])
+    return result
 
 
 def score_results(

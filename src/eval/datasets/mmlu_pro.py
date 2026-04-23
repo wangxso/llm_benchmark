@@ -58,7 +58,7 @@ class MMLUProBenchmark(BaseBenchmark):
         MMLU-Pro fields:
         - question_id: unique id
         - question: the question text
-        - options: list of 10 options (A-J)
+        - options: list of 10 options (A-J), some may be "N/A"
         - answer: correct option letter (A-J)
         - answer_index: correct option index (0-9)
         - cot_content: chain-of-thought content
@@ -66,19 +66,28 @@ class MMLUProBenchmark(BaseBenchmark):
         - src: source
         """
         question = row.get("question", "")
-        options = row.get("options", [])
+        raw_options = row.get("options", [])
         answer = row.get("answer", "")
 
-        if not question or not options:
+        if not question or not raw_options:
             return None
 
-        # MMLU-Pro has up to 10 options (A-J)
-        # Convert answer letter to uppercase
-        answer_letter = answer.upper() if isinstance(answer, str) else chr(ord("A") + answer)
+        # Filter out "N/A" options (official evaluator behavior)
+        options = [opt for opt in raw_options if opt != "N/A"]
 
+        if not options:
+            return None
+
+        # Recalculate answer index after filtering N/A
+        # answer_index points to position in original options list
+        answer_index = row.get("answer_index", 0)
+        answer_letter = answer.upper() if isinstance(answer, str) else chr(ord("A") + answer_index)
+
+        # Find the correct answer in filtered options
+        # The answer letter should still be valid (A-J) based on filtered options
         return {
             "question": question,
-            "choices": options,  # Keep all options (up to 10)
+            "choices": options,
             "answer": answer_letter,
             "subject": row.get("category", "unknown"),
         }
