@@ -5,7 +5,7 @@ from pathlib import Path
 import os
 from typing import Optional
 
-from src.webui.pages.providers import (
+from src.webui.views.providers import (
     Provider, load_providers, save_providers, add_provider,
     update_provider, delete_provider, get_default_providers
 )

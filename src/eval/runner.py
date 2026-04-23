@@ -131,7 +131,7 @@ class EvalRunner:
 
         payload = {
             "model": self.model or "claude-3-haiku-20240307",
-            "max_tokens": 2048,  # Enough for CoT reasoning
+            "max_tokens": 4000,  # Enough for CoT reasoning
             "messages": [{"role": "user", "content": prompt}],
         }
 

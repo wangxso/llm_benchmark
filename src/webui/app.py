@@ -27,19 +27,19 @@ page = st.sidebar.radio(
 
 st.sidebar.markdown("---")
 
-# Navigation with absolute imports
+# Navigation
 if page == "Model Check":
-    from src.webui.pages.check import render_check_page
+    from src.webui.views.check import render_check_page
     render_check_page()
 elif page == "Evaluation":
-    from src.webui.pages.eval import render_eval_page
+    from src.webui.views.eval import render_eval_page
     render_eval_page()
 elif page == "Load Testing":
-    from src.webui.pages.lb import render_lb_page
+    from src.webui.views.lb import render_lb_page
     render_lb_page()
 elif page == "Results":
-    from src.webui.pages.results import render_results_page
+    from src.webui.views.results import render_results_page
     render_results_page()
 elif page == "Settings":
-    from src.webui.pages.settings import render_settings_page
+    from src.webui.views.settings import render_settings_page
     render_settings_page()

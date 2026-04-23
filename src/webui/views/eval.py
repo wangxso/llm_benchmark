@@ -17,7 +17,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.eval import get_benchmark, list_benchmarks, EvalRunner
-from src.webui.pages.providers import load_providers, Provider
+from src.webui.views.providers import load_providers, Provider
 
 
 def render_eval_page():
