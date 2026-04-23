@@ -11,8 +11,9 @@ def extract_answer(response: str, num_options: int = 10) -> Optional[str]:
     Supports multiple formats:
     - Single letter: "A", "B", "C", "D", etc. (up to num_options)
     - With parentheses: "(A)", "[A]"
-    - With word: "Answer: A", "The answer is A"
-    - Chinese: "答案是A", "选择A"
+    - With word: "Answer: A", "The answer is A", "ANSWER: A"
+    - Chinese: "答案是A", "答案：A", "选择A"
+    - With dash: "——A", "-A"
 
     Args:
         response: Model response text
@@ -21,37 +22,50 @@ def extract_answer(response: str, num_options: int = 10) -> Optional[str]:
     Returns:
         Answer letter or None if not found
     """
+    if not response:
+        return None
+
     response = response.strip().upper()
 
     # Build valid option letters
     valid_letters = "".join(chr(ord("A") + i) for i in range(num_options))
 
-    # try direct single letter match
+    # Try direct single letter match first
     if response in list(valid_letters):
         return response
 
     # Pattern priority: more specific patterns first
     option_pattern = f"[A-{valid_letters[-1]}]"
     patterns = [
-        # "Answer: A" or "answer is A" patterns
-        rf"(?:ANSWER|ANS)\s*[:：]?\s*({option_pattern})",
-        rf"(?:THE\s+)?ANSWER\s+IS\s+({option_pattern})",
-        # Chinese patterns: 答案是A, 答案：A, 选择A
-        rf"答案\s*(?:是)?\s*[:：]?\s*({option_pattern})",
-        rf"选择\s*[:：]?\s*({option_pattern})",
+        # "Answer: A" or "ANSWER: A" patterns
+        r"(?:ANSWER|ANS)\s*[:：]\s*(" + option_pattern + ")",
+        r"(?:THE\s+)?ANSWER\s+IS\s+(" + option_pattern + ")",
+        # Chinese patterns: 答案是A, 答案：A, 答案： A
+        r"答案\s*(?:是)?\s*[:：]?\s*(" + option_pattern + ")",
+        r"选\s*[:：]?\s*(" + option_pattern + ")",
+        # Dash patterns: ——A, -A (Chinese and ASCII dashes)
+        r"[—─\-]{1,3}\s*(" + option_pattern + ")(?:\s|$)",
         # Parentheses/brackets: (A) [A] 【A】
-        rf"[【\(\[]({option_pattern})[】\)\]]",
-        # Standalone letter at start/end of response
-        rf"^\s*({option_pattern})\s*[\.。]?$",
-        rf"[,\.。\s]({option_pattern})[\s\.。,]*$",
-        # Any single letter (fallback)
-        rf"\b({option_pattern})\b",
+        r"[【\(\[](" + option_pattern + ")[】\)\]]",
+        # "最终答案：A" or similar
+        r"最终\s*答案\s*[:：]?\s*(" + option_pattern + ")",
+        # Letter at end of response with possible punctuation
+        r"(" + option_pattern + r")\s*[\.。！!]?\s*$",
+        # Letter after newline or space near end
+        r"[\n\s](" + option_pattern + r")\s*$",
+        # Any single letter as last resort (but must be standalone)
+        r"\b(" + option_pattern + r")\b",
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, response)
-        if match:
-            return match.group(1)
+        try:
+            match = re.search(pattern, response)
+            if match:
+                letter = match.group(1)
+                if letter in valid_letters:
+                    return letter
+        except:
+            continue
 
     return None
 

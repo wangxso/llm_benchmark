@@ -339,16 +339,16 @@ def display_eval_results(report: Dict, elapsed: float):
         successful_details = [d for d in details if d.get("success")]
 
         # Show first N results
-        show_count = min(50, len(successful_details))
+        show_count = min(30, len(successful_details))
 
-        # Create comparison table
-        comp_md = "| # | Subject | Actual | Predicted | Response |\n|---|---------|--------|-----------|----------|\n"
+        # Create comparison table - show more response text
+        comp_md = "| # | Subject | Actual | Pred | Response |\n|---|---------|--------|------|----------|\n"
 
         for i, d in enumerate(successful_details[:show_count]):
             actual = d.get("actual", "?")
             predicted = d.get("predicted", "N/A") or "N/A"
-            subject = d.get("subject", "unknown")[:15]
-            response = d.get("response", "")[:40].replace("\n", " ").replace("|", "\\|")
+            subject = d.get("subject", "unknown")[:12]
+            response = d.get("response", "")[:80].replace("\n", " ").replace("|", "\\|")
 
             marker = "✓" if actual == predicted else "✗"
             comp_md += f"| {i+1} | {subject} | **{actual}** | {predicted} | {response}... {marker} |\n"

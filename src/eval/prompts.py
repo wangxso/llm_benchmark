@@ -7,9 +7,9 @@ ZERO_SHOT = """{question}
 
 {options}
 
-Answer with only the letter (A, B, C, D, etc.)."""
+Answer with only the letter (A, B, C, D, E, F, G, H, I, or J). Do not explain."""
 
-# Few-shot prompt with examples
+# Few-shot prompt with examples (supports multi-choice A-J)
 FEW_SHOT_EXAMPLES = """Here are some examples:
 
 Question: What is the chemical symbol for gold?
@@ -26,13 +26,6 @@ C. Jupiter
 D. Saturn
 Answer: B
 
-Question: What is the capital of France?
-A. London
-B. Berlin
-C. Paris
-D. Madrid
-Answer: C
-
 """
 
 FEW_SHOT = FEW_SHOT_EXAMPLES + """Now answer this question:
@@ -41,21 +34,21 @@ FEW_SHOT = FEW_SHOT_EXAMPLES + """Now answer this question:
 
 {options}
 
-Answer with only the letter (A, B, C, D, etc.)."""
+Answer with only the letter. Do not explain."""
 
 # Chain-of-thought prompt
 COT = """{question}
 
 {options}
 
-Let's think step by step about this question. Then provide your final answer as a single letter (A, B, C, D, etc.)."""
+Think carefully, then end your response with: ANSWER: X (where X is the letter)"""
 
 # Chinese-style prompt
 ZERO_SHOT_CN = """{question}
 
 {options}
 
-请只回答选项字母。"""
+只回答选项字母(A-J)，不要解释。"""
 
 # Chinese few-shot prompt with examples
 FEW_SHOT_CN_EXAMPLES = """以下是一些示例：
@@ -67,13 +60,6 @@ C. 广州
 D. 深圳
 答案：B
 
-问题：水的化学式是什么？
-A. H2O
-B. CO2
-C. NaCl
-D. H2SO4
-答案：A
-
 """
 
 FEW_SHOT_CN = FEW_SHOT_CN_EXAMPLES + """请回答以下问题：
@@ -82,14 +68,14 @@ FEW_SHOT_CN = FEW_SHOT_CN_EXAMPLES + """请回答以下问题：
 
 {options}
 
-请只回答选项字母。"""
+只回答选项字母，不要解释。"""
 
 # Chinese Chain-of-thought prompt
 COT_CN = """{question}
 
 {options}
 
-请逐步思考这个问题，然后给出最终答案（只回答选项字母）。"""
+仔细思考，最后用"答案：X"的格式回答（X是选项字母）。"""
 
 PROMPT_STYLES = {
     "zero_shot": ZERO_SHOT,
