@@ -132,9 +132,9 @@ def render_lb_page():
             st.error("No provider selected")
             return
 
-        if not selected_provider.api_key:
-            st.error(f"Provider '{selected_provider.name}' has no API key configured")
-            return
+        # API key is optional for local vLLM servers
+        if not selected_provider.api_key and "localhost" not in selected_provider.base_url and "127.0.0.1" not in selected_provider.base_url:
+            st.warning(f"Provider '{selected_provider.name}' has no API key configured. This may cause authentication errors.")
 
         run_load_test(
             api_base_url=selected_provider.base_url,
