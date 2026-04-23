@@ -218,7 +218,9 @@ def run_load_test(
             status.info(f"⚡ Running {scenario} load test at {base_concurrency} concurrency for {duration}s...")
             progress_bar.progress(0.3)
 
-            results = controller.run(scenario, generator, client)
+            # Create the load scenario object
+            load_scenario = generator.create_scenario()
+            results = controller.run(load_scenario, generator, client)
 
             progress_bar.progress(0.8)
             status.info("📈 Generating report...")
