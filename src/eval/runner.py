@@ -244,17 +244,17 @@ class EvalRunner:
                 num_options = len(item.get("choices", []))
                 predicted = extract_answer(result["response"], num_options=num_options)
                 return {
-                    "question": item["question"][:100] + "...",  # Truncate for report
+                    "question": item["question"],  # Keep full question
                     "choices": item["choices"],
                     "actual": item["answer"],
                     "predicted": predicted,
                     "subject": item.get("subject", "unknown"),
-                    "response": result["response"][:200],
+                    "response": result["response"],  # Keep full response
                     "success": True,
                 }
             else:
                 return {
-                    "question": item["question"][:100] + "...",
+                    "question": item["question"],
                     "actual": item["answer"],
                     "predicted": None,
                     "subject": item.get("subject", "unknown"),

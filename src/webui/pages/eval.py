@@ -329,6 +329,41 @@ def display_eval_results(report: Dict, elapsed: float):
                 table_md += f"| {cat} | {stats['accuracy'] * 100:.1f}% | {stats['correct']}/{stats['total']} |\n"
         st.markdown(table_md)
 
+    # Answer Comparison Table
+    if report.get("details_file"):
+        st.markdown("#### Answer Comparison")
+        st.caption("Shows actual vs predicted answers for debugging answer extraction")
+
+        try:
+            with open(report["details_file"], "r") as f:
+                details = json.load(f)
+
+            # Filter successful results
+            successful_details = [d for d in details if d.get("success")]
+
+            # Show first N results
+            show_count = min(50, len(successful_details))
+
+            # Create comparison table
+            comp_md = "| # | Subject | Actual | Predicted | Response |\n|---|---------|--------|-----------|----------|\n"
+
+            for i, d in enumerate(successful_details[:show_count]):
+                actual = d.get("actual", "?")
+                predicted = d.get("predicted", "N/A") or "N/A"
+                subject = d.get("subject", "unknown")[:15]
+                response = d.get("response", "")[:40].replace("\n", " ").replace("|", "\\|")
+
+                marker = "✓" if actual == predicted else "✗"
+                comp_md += f"| {i+1} | {subject} | **{actual}** | {predicted} | {response}... {marker} |\n"
+
+            st.markdown(comp_md)
+
+            if len(successful_details) > show_count:
+                st.caption(f"... and {len(successful_details) - show_count} more results")
+
+        except Exception as e:
+            st.warning(f"Could not load details: {e}")
+
     # Report file
     if report.get("report_file"):
         st.markdown("#### Report File")

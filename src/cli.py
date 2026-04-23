@@ -124,6 +124,16 @@ def eval_cmd(**kwargs):
 
     print_eval_summary(report)
 
+    # Load details for answer comparison
+    if report.get("details_file"):
+        import json
+        try:
+            with open(report["details_file"], "r") as f:
+                details = json.load(f)
+            print_answer_comparison(details, limit=20)
+        except:
+            pass
+
 
 def print_eval_summary(report):
     """Print evaluation summary"""
@@ -182,6 +192,46 @@ def print_eval_summary(report):
 
     if report.get("report_file"):
         click.echo(f"\nReport saved: {report['report_file']}")
+
+
+def print_answer_comparison(details: list, limit: int = 20):
+    """Print answer comparison table for debugging"""
+    click.echo("\n" + "=" * 100)
+    click.echo("ANSWER COMPARISON (first {} results)".format(min(limit, len(details))))
+    click.echo("=" * 100)
+
+    # Header
+    click.echo("\n{:<4} {:<6} {:<6} {:<30} {:<50}".format(
+        "#", "Actual", "Pred", "Subject", "Response (truncated)"
+    ))
+    click.echo("-" * 100)
+
+    correct_count = 0
+    shown = 0
+    for i, d in enumerate(details):
+        if not d.get("success"):
+            continue
+
+        actual = d.get("actual", "?")
+        predicted = d.get("predicted", "N/A")
+        subject = d.get("subject", "unknown")[:28]
+        response = d.get("response", "")[:48]
+
+        is_correct = actual == predicted
+        if is_correct:
+            correct_count += 1
+
+        marker = "✓" if is_correct else "✗"
+        click.echo("{:<4} {:<6} {:<6} {:<30} {:<50} {}".format(
+            i + 1, actual, predicted or "N/A", subject, response, marker
+        ))
+
+        shown += 1
+        if shown >= limit:
+            break
+
+    click.echo("-" * 100)
+    click.echo(f"\nShown: {shown} | Correct in shown: {correct_count}/{shown}")
 
     click.echo("=" * 50 + "\n")
 
