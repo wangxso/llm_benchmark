@@ -124,15 +124,9 @@ def eval_cmd(**kwargs):
 
     print_eval_summary(report)
 
-    # Load details for answer comparison
-    if report.get("details_file"):
-        import json
-        try:
-            with open(report["details_file"], "r") as f:
-                details = json.load(f)
-            print_answer_comparison(details, limit=20)
-        except:
-            pass
+    # Show answer comparison from details
+    if report.get("details"):
+        print_answer_comparison(report["details"], limit=20)
 
 
 def print_eval_summary(report):

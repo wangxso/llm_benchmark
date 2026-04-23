@@ -439,6 +439,20 @@ class EvalRunner:
             )
         )
 
+        # Include results in report for immediate display
+        report["details"] = [
+            {
+                "question": r.get("question", ""),
+                "actual": r.get("actual"),
+                "predicted": r.get("predicted"),
+                "subject": r.get("subject", "unknown"),
+                "response": r.get("response", ""),
+                "success": r.get("success", False),
+                "error": r.get("error"),
+            }
+            for r in results
+        ]
+
         if output_dir:
             output_path = Path(output_dir)
             output_path.mkdir(parents=True, exist_ok=True)
