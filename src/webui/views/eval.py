@@ -137,6 +137,19 @@ def render_eval_page():
             help="COT/MMLU_Pro: Think step by step, output 'The answer is (X)'"
         )
 
+    # Dataset source selection
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        dataset_source = st.selectbox(
+            "Dataset Source",
+            ["huggingface", "modelscope"],
+            index=0,
+            key="eval_dataset_source",
+            help="ModelScope is faster in China, HuggingFace is the default"
+        )
+    with col2:
+        st.caption(f"📍 Source: `{dataset_source}` - {'国内访问更稳定' if dataset_source == 'modelscope' else '默认源'}")
+
     # Show benchmark info
     if selected_benchmark:
         info = benchmark_info[selected_benchmark]
@@ -176,6 +189,7 @@ def render_eval_page():
             offline=offline,
             prompt_style=prompt_style,
             output_dir=output_dir,
+            dataset_source=dataset_source,
         )
 
 
@@ -193,6 +207,7 @@ def run_evaluation(
     offline: bool,
     prompt_style: str,
     output_dir: str,
+    dataset_source: str = "huggingface",
 ):
     """Run the evaluation with progress tracking"""
 
@@ -200,7 +215,7 @@ def run_evaluation(
     progress_container = st.container()
 
     with progress_container:
-        st.info(f"Starting evaluation: {benchmark_name}")
+        st.info(f"Starting evaluation: {benchmark_name} (source: {dataset_source})")
 
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -223,6 +238,7 @@ def run_evaluation(
                 api_base_url=api_base_url,
                 api_key=api_key,
                 api_type=api_type,
+                dataset_source=dataset_source,
             )
 
             # Run evaluation

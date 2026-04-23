@@ -39,6 +39,7 @@ class EvalRunner:
         api_base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         api_type: str = "openai",
+        dataset_source: str = "huggingface",  # "huggingface" or "modelscope"
     ):
         self.benchmark = benchmark
         self.host = host
@@ -51,6 +52,7 @@ class EvalRunner:
         self.hf_token = hf_token
         self.api_key = api_key
         self.api_type = api_type.lower()
+        self.dataset_source = dataset_source
 
         # Determine base URL
         if api_base_url:
@@ -278,6 +280,7 @@ class EvalRunner:
             max_samples=max_samples,
             token=self.hf_token,
             offline=self.offline,
+            source=self.dataset_source,
         )
 
         if not items:

@@ -6,6 +6,15 @@ from datasets import load_dataset
 import os
 
 
+# ModelScope to HuggingFace dataset mapping
+MODELSCOPE_MAPPING = {
+    "mmlu-pro": "iic/MMLU-Pro",
+    "gpqa": "iic/GPQA",
+    "ceval": "iic/CEval",
+    "mmlu": "iic/MMLU",
+}
+
+
 class BaseBenchmark(ABC):
     """Abstract base class for benchmark datasets"""
 
@@ -15,6 +24,9 @@ class BaseBenchmark(ABC):
     description: str = ""
     requires_auth: bool = False
 
+    # ModelScope support
+    modelscope_path: Optional[str] = None  # Override for ModelScope path
+
     def load(
         self,
         split: str = "test",
@@ -22,8 +34,9 @@ class BaseBenchmark(ABC):
         max_samples: Optional[int] = None,
         token: Optional[str] = None,
         offline: bool = False,
+        source: str = "huggingface",  # "huggingface" or "modelscope"
     ) -> List[Dict[str, Any]]:
-        """Load dataset from HuggingFace
+        """Load dataset from HuggingFace or ModelScope
 
         Args:
             split: Dataset split to use
@@ -31,6 +44,7 @@ class BaseBenchmark(ABC):
             max_samples: Maximum samples to load
             token: HuggingFace token for gated datasets
             offline: Use cached dataset only (no network)
+            source: Dataset source - "huggingface" or "modelscope"
 
         Returns:
             List of items with unified format:
@@ -49,15 +63,28 @@ class BaseBenchmark(ABC):
                 except Exception:
                     pass
 
+        # Determine dataset path based on source
+        if source == "modelscope":
+            dataset_path = self.modelscope_path or MODELSCOPE_MAPPING.get(self.name.lower().replace("-", "").replace("_", "").lower())
+            if not dataset_path:
+                # Try auto-converting: TIGER-Lab/MMLU-Pro -> iic/MMLU-Pro
+                parts = self.hf_path.split("/")
+                if len(parts) == 2:
+                    dataset_path = f"iic/{parts[1]}"
+                else:
+                    dataset_path = self.hf_path
+        else:
+            dataset_path = self.hf_path
+
         try:
             load_kwargs = {
-                "path": self.hf_path,
+                "path": dataset_path,
                 "split": split,
                 "trust_remote_code": True,
             }
             if self.hf_name:
                 load_kwargs["name"] = self.hf_name
-            if token:
+            if token and source == "huggingface":
                 load_kwargs["token"] = token
             if offline:
                 load_kwargs["download_mode"] = "force_redownload" if os.environ.get("FORCE_REDOWNLOAD") else "reuse_cache_if_exists"
@@ -65,6 +92,12 @@ class BaseBenchmark(ABC):
             ds = load_dataset(**load_kwargs)
         except Exception as e:
             error_msg = str(e)
+            if source == "modelscope":
+                # Fallback to HuggingFace if ModelScope fails
+                print(f"ModelScope load failed, trying HuggingFace: {e}")
+                return self.load(split=split, subject=subject, max_samples=max_samples,
+                                token=token, offline=offline, source="huggingface")
+
             if "gated dataset" in error_msg.lower() or "authenticated" in error_msg.lower():
                 raise RuntimeError(
                     f"Dataset '{self.hf_path}' requires authentication.\n"

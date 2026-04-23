@@ -46,7 +46,6 @@ def render_check_page():
             selected_provider_name = st.selectbox(
                 "Select Provider",
                 provider_names,
-                [p.name for p in providers],
                 key="check_provider_select",
                 help="Select a configured provider"
             )
