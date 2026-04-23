@@ -7,11 +7,23 @@ import time
 from typing import Dict, Any, Optional
 import sys
 from pathlib import Path
+from dataclasses import dataclass
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
+
+
+@dataclass
+class LBProvider:
+    """Load Balancer as a provider"""
+    name: str = "Load Balancer"
+    api_type: str = "openai"
+    base_url: str = ""
+    api_key: str = ""
+    default_model: str = ""
+    description: str = "vLLM Load Balancer"
 
 
 def get_lb_config():
@@ -27,6 +39,29 @@ def get_lb_config():
 def set_lb_config(config: dict):
     """Set LB configuration"""
     st.session_state["lb_config"] = config
+
+
+def get_lb_as_provider() -> Optional[LBProvider]:
+    """Get Load Balancer as a provider for testing"""
+    config = get_lb_config()
+    api_url = config.get("api_url", "").strip()
+
+    if not api_url:
+        return None
+
+    # Ensure /v1 suffix for OpenAI-compatible API
+    base_url = api_url.rstrip("/")
+    if not base_url.endswith("/v1"):
+        base_url = f"{base_url}/v1"
+
+    return LBProvider(
+        name="Load Balancer",
+        api_type="openai",
+        base_url=base_url,
+        api_key="",  # LB typically doesn't need API key
+        default_model="",
+        description=f"vLLM Load Balancer ({api_url})"
+    )
 
 
 def api_request(endpoint: str, method: str = "GET", json_data: Any = None, config: dict = None) -> Optional[Dict]:

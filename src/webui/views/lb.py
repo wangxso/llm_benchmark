@@ -13,6 +13,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.webui.views.providers import load_providers, Provider
+from src.webui.views.balancer import get_lb_as_provider
 
 
 def render_lb_page():
@@ -21,6 +22,11 @@ def render_lb_page():
 
     # Load providers
     providers = load_providers()
+
+    # Add Load Balancer as a provider option
+    lb_provider = get_lb_as_provider()
+    if lb_provider:
+        providers.insert(0, lb_provider)
 
     if not providers:
         st.warning("No providers configured. Please add providers in Settings first.")

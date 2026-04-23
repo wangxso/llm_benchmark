@@ -18,6 +18,7 @@ if str(project_root) not in sys.path:
 
 from src.eval import get_benchmark, list_benchmarks, EvalRunner
 from src.webui.views.providers import load_providers, Provider
+from src.webui.views.balancer import get_lb_as_provider
 
 
 def render_eval_page():
@@ -26,6 +27,11 @@ def render_eval_page():
 
     # Load providers
     providers = load_providers()
+
+    # Add Load Balancer as a provider option
+    lb_provider = get_lb_as_provider()
+    if lb_provider:
+        providers.insert(0, lb_provider)
 
     if not providers:
         st.warning("No providers configured. Please add providers in Settings first.")
@@ -39,11 +45,12 @@ def render_eval_page():
         col1, col2 = st.columns([1, 3])
 
         with col1:
+            provider_names = [p.name for p in providers]
             selected_provider_name = st.selectbox(
                 "Select Provider",
-                [p.name for p in providers],
+                provider_names,
                 key="eval_provider_select",
-                help="Select a configured provider"
+                help="Select a configured provider or Load Balancer"
             )
 
         # Get selected provider
