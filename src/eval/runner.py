@@ -79,7 +79,7 @@ class EvalRunner:
 
         payload = {
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 64,
+            "max_tokens": 4000,  # Enough for CoT reasoning
             "temperature": 0.0,
         }
         if self.model:
@@ -131,7 +131,7 @@ class EvalRunner:
 
         payload = {
             "model": self.model or "claude-3-haiku-20240307",
-            "max_tokens": 64,
+            "max_tokens": 2048,  # Enough for CoT reasoning
             "messages": [{"role": "user", "content": prompt}],
         }
 
