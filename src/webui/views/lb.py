@@ -236,6 +236,18 @@ def run_load_test(
             report_gen = ReportGenerator(config)
             report = report_gen.generate(results, collector.get_metrics())
 
+            # Save results to file
+            import os
+            from datetime import datetime
+            output_dir = config.get("output", {}).get("path", "./results")
+            os.makedirs(output_dir, exist_ok=True)
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            report_file = f"{output_dir}/benchmark_{timestamp}.json"
+
+            report_gen.save(report, report_file)
+            report["report_file"] = report_file
+
             progress_bar.progress(1.0)
             status.empty()
             progress_bar.empty()
@@ -326,3 +338,8 @@ def display_load_test_results(report: Dict):
     table_md += f"| Success Rate | {metrics.get('success_rate', 0) * 100:.1f}% |\n"
     table_md += f"| Error Rate | {metrics.get('error_rate', 0) * 100:.1f}% |\n"
     st.markdown(table_md)
+
+    # Report file
+    if report.get("report_file"):
+        st.markdown("#### 📁 Report Saved")
+        st.code(report["report_file"])
