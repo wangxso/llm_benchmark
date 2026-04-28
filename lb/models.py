@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
+from src.metrics.vllm_exporter import _get_gpu_utilization
+
 
 @dataclass
 class InstanceConfig:
@@ -64,7 +66,7 @@ class InstanceState:
             "kv_cache_usage": self.metrics.get(
                 "vllm:kv_cache_usage_perc", self.metrics.get("vllm:kv_cache_usage", 0.0)
             ),
-            "gpu_utilization": self.metrics.get("vllm:gpu_utilization", 0.0),
+            "gpu_utilization": _get_gpu_utilization(),  # Real GPU utilization via pynvml
             "actual_tflops_per_second": self.metrics.get(
                 "vllm:actual_tflops_per_second", 0.0
             ),

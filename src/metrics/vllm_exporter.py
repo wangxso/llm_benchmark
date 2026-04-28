@@ -2,6 +2,36 @@ import asyncio
 import aiohttp
 from typing import Dict, Any, Optional
 
+# GPU monitoring via pynvml (optional)
+_pynvml_available = False
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    _pynvml_available = True
+except Exception:
+    pass
+
+
+def _get_gpu_utilization() -> float:
+    """Get GPU utilization via nvidia-smi/pynvml"""
+    if not _pynvml_available:
+        return 0.0
+
+    try:
+        device_count = pynvml.nvmlDeviceGetCount()
+        if device_count == 0:
+            return 0.0
+
+        total_util = 0.0
+        for i in range(device_count):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            total_util += util.gpu
+
+        return total_util / device_count / 100.0  # Return as 0-1 range
+    except Exception:
+        return 0.0
+
 
 class VLLMExporter:
     """vLLM metrics exporter"""
@@ -66,7 +96,7 @@ class VLLMExporter:
             "kv_cache_usage": metrics.get("vllm:kv_cache_usage", 0),
             "prefill_latency": metrics.get("vllm:prefill_latency", 0),
             "decode_latency": metrics.get("vllm:decode_latency", 0),
-            "gpu_utilization": metrics.get("vllm:gpu_utilization", 0),
+            "gpu_utilization": _get_gpu_utilization(),  # Real GPU utilization via pynvml
         }
 
     async def check_health(self) -> bool:

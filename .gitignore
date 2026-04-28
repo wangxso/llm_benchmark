@@ -14,3 +14,4 @@ venv/
 results/
 lb/runtime/
 providers.json
+models/
