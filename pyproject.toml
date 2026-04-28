@@ -17,6 +17,7 @@ dependencies = [
     "datasets>=2.14.0",
     "tqdm>=4.66.0",
     "pynvml>=11.5.0",  # GPU utilization monitoring
+    "optuna>=3.4.0",  # Auto-tuning Bayesian optimization
 ]
 
 [project.scripts]

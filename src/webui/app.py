@@ -21,7 +21,7 @@ st.sidebar.caption("High-Concurrency Simulation Testing Platform")
 
 page = st.sidebar.radio(
     "Navigation",
-    ["Model Check", "Evaluation", "Load Testing", "Load Balancer", "Results", "Settings"],
+    ["Model Check", "Evaluation", "Load Testing", "Auto-Tuning", "Load Balancer", "Results", "Settings"],
     label_visibility="collapsed",
 )
 
@@ -37,6 +37,9 @@ elif page == "Evaluation":
 elif page == "Load Testing":
     from src.webui.views.lb import render_lb_page
     render_lb_page()
+elif page == "Auto-Tuning":
+    from src.webui.views.autotune import render_autotune_page
+    render_autotune_page()
 elif page == "Load Balancer":
     from src.webui.views.balancer import render_balancer_page
     render_balancer_page()

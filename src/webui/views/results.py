@@ -50,7 +50,7 @@ def render_results_page():
         with col1:
             result_type = st.selectbox(
                 "Result Type",
-                ["All", "Evaluation", "Load Test"],
+                ["All", "Evaluation", "Load Test", "Auto-Tuning"],
                 key="results_type_filter"
             )
 
@@ -63,7 +63,7 @@ def render_results_page():
         st.markdown(f"**Found {len(filtered_files)} results**")
 
         # Display results in a more compact table format
-        for file_info in filtered_files[:20]:
+        for idx, file_info in enumerate(filtered_files[:20]):
             col1, col2, col3, col4 = st.columns([2, 1, 2, 1])
 
             with col1:
@@ -78,7 +78,8 @@ def render_results_page():
                 st.caption(f"📅 {file_info['timestamp'][:16] if file_info.get('timestamp') else 'N/A'}")
 
             with col4:
-                if st.button("📊 View", key=f"view_{file_info['path']}"):
+                # Use index in key to ensure uniqueness
+                if st.button("📊 View", key=f"view_result_{idx}_{hash(file_info['path'])}"):
                     st.session_state['selected_result'] = file_info['path']
                     st.rerun()
 
@@ -86,11 +87,12 @@ def render_results_page():
 def scan_results(results_dir: str) -> List[Dict]:
     """Scan results directory for result files"""
     results = []
+    seen_paths = set()  # Track seen paths to avoid duplicates
 
     # Scan for eval results
     eval_files = glob.glob(f"{results_dir}/eval_*.json")
     for f in eval_files:
-        if "_details.json" in f:
+        if "_details.json" in f or f in seen_paths:
             continue
         try:
             with open(f, "r") as file:
@@ -103,12 +105,15 @@ def scan_results(results_dir: str) -> List[Dict]:
                     "model": data.get("model", ""),
                     "data": data,
                 })
+                seen_paths.add(f)
         except:
             pass
 
     # Scan for load test results
     benchmark_files = glob.glob(f"{results_dir}/benchmark_*.json")
     for f in benchmark_files:
+        if f in seen_paths:
+            continue
         try:
             with open(f, "r") as file:
                 data = json.load(file)
@@ -120,6 +125,29 @@ def scan_results(results_dir: str) -> List[Dict]:
                     "model": data.get("test_info", {}).get("model", ""),
                     "data": data,
                 })
+                seen_paths.add(f)
+        except:
+            pass
+
+    # Scan for auto-tuning results
+    autotune_files = glob.glob(f"{results_dir}/autotune/tuning_report.json")
+    autotune_files += glob.glob(f"{results_dir}/**/tuning_report.json", recursive=True)
+    for f in autotune_files:
+        if f in seen_paths:
+            continue
+        try:
+            with open(f, "r") as file:
+                data = json.load(file)
+                best = data.get("best_result", {})
+                results.append({
+                    "path": f,
+                    "name": f"🔧 Auto-Tuning",
+                    "type": "Auto-Tuning",
+                    "timestamp": data.get("summary", {}).get("completed_at", ""),
+                    "model": best.get("config", {}).get("model", "unknown"),
+                    "data": data,
+                })
+                seen_paths.add(f)
         except:
             pass
 
@@ -139,6 +167,8 @@ def filter_results(results: List[Dict], result_type: str, search: str) -> List[D
             if result_type == "Evaluation" and r["type"] != "Evaluation":
                 continue
             if result_type == "Load Test" and r["type"] != "Load Test":
+                continue
+            if result_type == "Auto-Tuning" and r["type"] != "Auto-Tuning":
                 continue
 
         # Filter by search
@@ -164,6 +194,9 @@ def show_result_detail(file_path: str):
         if "benchmark" in data:
             # Evaluation result
             show_eval_detail(data)
+        elif "best_result" in data or "summary" in data:
+            # Auto-tuning result
+            show_autotune_detail(data)
         else:
             # Load test result
             show_load_test_detail(data)
@@ -451,3 +484,130 @@ def show_load_test_detail(data: Dict):
         col_idx = i % 4
         with summary_cols[col_idx]:
             st.metric(name, value)
+
+
+def show_autotune_detail(data: Dict):
+    """Show auto-tuning result details with charts"""
+    st.markdown("## 🔧 Auto-Tuning Details")
+
+    summary = data.get("summary", {})
+    best_result = data.get("best_result", {})
+    history = data.get("history", [])
+
+    # Summary metrics
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric("Total Trials", summary.get("total_trials", 0))
+
+    with col2:
+        st.metric("Successful", summary.get("successful_trials", 0))
+
+    with col3:
+        best_score = summary.get("best_score")
+        if best_score:
+            st.metric("Best Score", f"{best_score:.2f}")
+
+    with col4:
+        st.metric("Best Trial", f"#{summary.get('best_trial_id', 'N/A')}")
+
+    st.markdown("")
+
+    if not best_result:
+        st.warning("No successful tuning results")
+        return
+
+    # Best configuration
+    st.markdown("### 🏆 Best Configuration")
+
+    config = best_result.get("config", {})
+    metrics = best_result.get("metrics", {})
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**vLLM Parameters**")
+        config_md = "| Parameter | Value |\n|-----------|-------|\n"
+        config_md += f"| GPU Memory Utilization | {config.get('gpu_memory_utilization', 'N/A')} |\n"
+        config_md += f"| Tensor Parallel | {config.get('tensor_parallel', 'N/A')} |\n"
+        config_md += f"| Max Model Length | {config.get('max_model_len', 'N/A')} |\n"
+        config_md += f"| Max Num Seqs | {config.get('max_num_seqs', 'N/A')} |\n"
+        st.markdown(config_md)
+
+    with col2:
+        st.markdown("**Performance Metrics**")
+        metric_md = "| Metric | Value |\n|--------|-------|\n"
+        metric_md += f"| TPS | {metrics.get('tps', 0):.2f} tok/s |\n"
+        metric_md += f"| QPS | {metrics.get('qps', 0):.2f} req/s |\n"
+        metric_md += f"| Latency P50 | {metrics.get('latency_p50', 0):.1f} ms |\n"
+        metric_md += f"| Latency P99 | {metrics.get('latency_p99', 0):.1f} ms |\n"
+        metric_md += f"| Success Rate | {metrics.get('success_rate', 0) * 100:.1f}% |\n"
+        st.markdown(metric_md)
+
+    # Tuning history chart
+    if history:
+        st.markdown("### 📈 Tuning Progress")
+
+        scores = [h.get("score", 0) for h in history if h.get("score") is not None]
+        trials = list(range(1, len(scores) + 1))
+
+        fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
+        ax.plot(trials, scores, 'b-o', linewidth=2, markersize=6)
+        ax.axhline(y=max(scores), color='r', linestyle='--', alpha=0.5, label=f'Best: {max(scores):.2f}')
+        ax.set_xlabel('Trial')
+        ax.set_ylabel('Score')
+        ax.set_title('Optimization Progress')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        st.pyplot(fig, clear_figure=True)
+
+        # Parameter analysis
+        st.markdown("### 🔍 Parameter Impact")
+
+        # TPS vs GPU Memory utilization - ensure same length
+        valid_points = []
+        for h in history:
+            metrics = h.get("metrics", {})
+            config = h.get("config", {})
+            if metrics and config:
+                tps = metrics.get("tps")
+                gpu_mem = config.get("gpu_memory_utilization")
+                if tps is not None and gpu_mem is not None:
+                    valid_points.append((gpu_mem, tps))
+
+        if len(valid_points) >= 2:
+            gpu_mem_values, tps_values = zip(*valid_points)
+            fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
+            ax.scatter(gpu_mem_values, tps_values, c='steelblue', s=100, alpha=0.6)
+            ax.set_xlabel('GPU Memory Utilization')
+            ax.set_ylabel('TPS (tokens/s)')
+            ax.set_title('Throughput vs GPU Memory Utilization')
+            ax.grid(True, alpha=0.3)
+
+            plt.tight_layout()
+            st.pyplot(fig, clear_figure=True)
+        else:
+            st.info("Not enough valid data points for parameter impact analysis")
+
+    # History table
+    if history:
+        st.markdown("### 📋 All Trials")
+
+        history_data = []
+        for h in history:
+            cfg = h.get("config", {})
+            met = h.get("metrics", {})
+            history_data.append({
+                "Trial": h.get("trial_id", 0),
+                "Score": f"{h.get('score', 0):.2f}",
+                "TPS": f"{met.get('tps', 0):.1f}",
+                "P99 (ms)": f"{met.get('latency_p99', 0):.1f}",
+                "GPU Mem": cfg.get("gpu_memory_utilization", ""),
+                "TP": cfg.get("tensor_parallel", ""),
+                "Max Len": cfg.get("max_model_len", ""),
+                "Status": "✓" if h.get("error") is None else "✗",
+            })
+
+        st.dataframe(history_data, use_container_width=True, hide_index=True)

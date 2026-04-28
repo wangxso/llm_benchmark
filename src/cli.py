@@ -568,6 +568,122 @@ def report(input, output):
         click.echo(f"[Success] Report saved to: {output}")
 
 
+@cli.command("tune")
+@click.option("--model", "-m", required=True, help="Model path or name")
+@click.option("--gpu-ids", required=True, help="GPU IDs to use (e.g., '0' or '0,1,2,3')")
+@click.option("--strategy", type=click.Choice(["bayesian", "random", "grid"]), default="bayesian", help="Search strategy")
+@click.option("--objective", type=click.Choice(["throughput", "latency", "balanced"]), default="throughput", help="Optimization objective")
+@click.option("--max-trials", default=20, help="Maximum number of trials")
+@click.option("--concurrency", default=100, help="Load test concurrency")
+@click.option("--duration", default=60, help="Duration per trial in seconds")
+@click.option("--startup-timeout", default=300, help="Timeout for vLLM startup")
+@click.option("--output", "-o", default="./results/autotune", help="Output directory")
+@click.option("--seed", default=42, help="Random seed for reproducibility")
+def tune_cmd(**kwargs):
+    """Auto-tune vLLM parameters for optimal performance.
+
+    This command automatically searches for the best vLLM configuration
+    by testing different parameter combinations and measuring performance.
+
+    Examples:
+        # Basic usage - optimize for throughput
+        bench.py tune --model ./models/Qwen3.5-0.8B --gpu-ids "0"
+
+        # Use all 4 GPUs with bayesian optimization
+        bench.py tune --model ./models/Qwen3.5-0.8B --gpu-ids "0,1,2,3" --max-trials 30
+
+        # Optimize for low latency
+        bench.py tune --model ./models/Qwen3.5-0.8B --gpu-ids "0" --objective latency
+
+    The tuning process will:
+    1. Start vLLM with different parameter configurations
+    2. Run load tests to measure throughput and latency
+    3. Find the configuration that maximizes the objective
+    4. Save the best configuration to output directory
+
+    Output files:
+    - tuning_report.json: Complete tuning report
+    - tuning_history.csv: CSV with all trial results
+    - best_config.yaml: Best configuration for deployment
+    """
+    from .autotune import AutoTuner, save_tuning_report, generate_deploy_template
+    from .autotune.config import get_default_vllm_space
+
+    model_path = kwargs["model"]
+    gpu_ids = kwargs["gpu_ids"]
+    strategy = kwargs["strategy"]
+    objective = kwargs["objective"]
+    max_trials = kwargs["max_trials"]
+    concurrency = kwargs["concurrency"]
+    duration = kwargs["duration"]
+    startup_timeout = kwargs["startup_timeout"]
+    output_dir = kwargs["output"]
+    seed = kwargs["seed"]
+
+    click.echo("=" * 60)
+    click.echo("AUTO-TUNER: vLLM Parameter Optimization")
+    click.echo("=" * 60)
+    click.echo(f"\nModel: {model_path}")
+    click.echo(f"GPU IDs: {gpu_ids}")
+    click.echo(f"Strategy: {strategy}")
+    click.echo(f"Objective: {objective}")
+    click.echo(f"Max Trials: {max_trials}")
+    click.echo(f"Duration per trial: {duration}s")
+    click.echo(f"Concurrency: {concurrency}")
+    click.echo(f"Output: {output_dir}")
+    click.echo("")
+
+    # Create auto-tuner
+    gpu_count = len(gpu_ids.split(","))
+    search_space = get_default_vllm_space(gpu_count=gpu_count)
+
+    tuner = AutoTuner(
+        model_path=model_path,
+        gpu_ids=gpu_ids,
+        search_space=search_space,
+        strategy=strategy,
+        objective=objective,
+        max_trials=max_trials,
+        startup_timeout=startup_timeout,
+        seed=seed,
+        verbose=True,
+        log_dir=f"{output_dir}/logs",
+    )
+
+    # Run tuning
+    try:
+        best_result = tuner.run()
+    except KeyboardInterrupt:
+        click.echo("\n[Tune] Interrupted by user")
+        best_result = tuner._get_best_result()
+
+    # Save results
+    from pathlib import Path
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    if best_result and best_result.error is None:
+        # Save tuning report
+        save_tuning_report(tuner.results, output_path / "tuning_report.json")
+
+        # Save best config as YAML
+        generate_deploy_template(
+            best_result.config,
+            output_path / "best_config.yaml",
+            model_path=model_path,
+            gpu_ids=gpu_ids,
+        )
+
+        click.echo(f"\n[Success] Results saved to {output_dir}")
+        click.echo(f"  - tuning_report.json: Full report")
+        click.echo(f"  - tuning_history.csv: Trial history")
+        click.echo(f"  - best_config.yaml: Best configuration")
+    else:
+        click.echo("\n[Tune] No successful trials completed")
+        if tuner.results:
+            save_tuning_report(tuner.results, output_path / "tuning_report.json")
+
+
 def merge_cli_config(config, cli_args):
     """Merge CLI arguments into config"""
     if cli_args.get("concurrency"):

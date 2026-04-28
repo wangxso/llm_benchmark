@@ -6,9 +6,11 @@
 
 - **多模式压测**: 固定并发、阶梯升压、突发洪峰、长上下文、流式响应
 - **基准评测**: 支持 GPQA、MMLU-Pro、MMLU-Redux、SuperGPQA 等标准评测集
+- **Auto-Tuning**: 基于 Bayesian Optimization 的 vLLM 参数自动调优
 - **数据集管理**: 支持导入（JSON/JSONL/CSV）和泛化生成两种模式，可指定文本字段如 `instruction`
 - **全链路指标**: QPS、TPS、TTFT、TPOT、P50/P90/P99 时延
 - **vLLM 集成**: 自动采集内部指标（batch size、KV Cache、GPU 利用率）
+- **WebUI**: Streamlit 可视化界面，支持评测、压测、调参、负载均衡管理
 - **报告生成**: JSON 格式输出，包含瓶颈分析
 
 ## 安装
@@ -242,8 +244,22 @@ llm_benchmark/
 │   │   ├── runner.py           # 评测执行器
 │   │   ├── prompts.py          # Prompt 模板
 │   │   └── scorer.py           # 答案评分
+│   ├── autotune/               # Auto-Tuning Agent
+│   │   ├── config.py           # 搜索空间配置
+│   │   ├── search.py           # 搜索策略 (Bayesian/Random/Grid)
+│   │   ├── evaluator.py        # 配置评估器
+│   │   ├── optimizer.py        # 主优化器
+│   │   └── templates.py        # 部署模板生成
+│   ├── webui/                  # WebUI 模块
+│   │   ├── app.py              # Streamlit 主入口
+│   │   └── views/              # 各页面视图
 │   └── report/
 │       └── generator.py        # 报告生成
+├── lb/                         # Load Balancer 模块
+│   ├── app.py                  # FastAPI 主服务
+│   ├── scheduler.py            # 请求调度
+│   ├── process_manager.py      # 实例进程管理
+│   └── monitor.py              # 指标监控
 └── results/                    # 测试结果输出目录
 ```
 
@@ -357,9 +373,6 @@ instances:
   #   gpu_memory_utilization: 0.80
   #   max_model_len: 4096
   #   enable_mfu_metrics: true
-    gpu_memory_utilization: 0.85
-    max_model_len: 4096
-    enable_mfu_metrics: true
 ```
 
 ### API 端点
@@ -410,6 +423,118 @@ curl -X POST http://localhost:9000/v1/chat/completions \
 ```bash
 python bench.py run --vllm-host 127.0.0.1 --vllm-port 9000 --concurrency 50 --duration 60
 ```
+
+## Auto-Tuning Agent (vLLM 参数自动调优)
+
+`src/autotune/` 模块提供了基于 Bayesian Optimization 的 vLLM 参数自动调优功能，帮助找到最优的部署配置。
+
+### 功能特性
+
+- **智能搜索**: 使用 Optuna TPE 采样器进行贝叶斯优化
+- **多策略支持**: Bayesian / Random / Grid 三种搜索策略
+- **灵活目标**: 支持吞吐量优先、延迟优先、平衡模式
+- **预设模板**: 内置 Default / High Throughput / Low Latency 三种搜索空间
+- **WebUI 集成**: 可视化配置、实时进度、结果分析
+
+### 快速开始
+
+```bash
+# 基本用法 - 优化吞吐量
+python bench.py tune --model ./models/Qwen3.5-4B --gpu-ids "0"
+
+# 多 GPU + 更多试验
+python bench.py tune --model ./models/Qwen3.5-4B --gpu-ids "0,1,2,3" --max-trials 30
+
+# 优化低延迟
+python bench.py tune --model ./models/Qwen3.5-4B --gpu-ids "0" --objective latency
+
+# 使用随机搜索
+python bench.py tune --model ./models/Qwen3.5-4B --gpu-ids "0" --strategy random
+```
+
+### CLI 参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--model`, `-m` | 模型路径或名称 | 必填 |
+| `--gpu-ids` | GPU ID 列表 | 必填 |
+| `--strategy` | 搜索策略 (bayesian/random/grid) | bayesian |
+| `--objective` | 优化目标 (throughput/latency/balanced) | throughput |
+| `--max-trials` | 最大尝试次数 | 20 |
+| `--concurrency` | 负载测试并发数 | 100 |
+| `--duration` | 每次评估时长（秒） | 60 |
+| `--startup-timeout` | vLLM 启动超时（秒） | 300 |
+| `--output`, `-o` | 输出目录 | ./results/autotune |
+
+### 搜索参数
+
+默认搜索空间：
+
+| 参数 | 范围 |
+|------|------|
+| `gpu_memory_utilization` | 0.70 - 0.95 (步长 0.05) |
+| `tensor_parallel` | 基于 GPU 数量自动调整 |
+| `max_model_len` | [4096, 8192, 16384, 32768] |
+| `max_num_seqs` | 32 - 256 (步长 32) |
+
+### 输出文件
+
+- `tuning_report.json`: 完整调参报告
+- `tuning_history.csv`: 所有试验记录
+- `best_config.yaml`: 最优配置模板
+
+### WebUI 使用
+
+启动 WebUI 后，导航到 **Auto-Tuning** 页面：
+
+```bash
+streamlit run src/webui/app.py
+```
+
+在 WebUI 中可以：
+1. 配置模型路径、GPU、优化目标
+2. 选择或自定义搜索空间
+3. 实时查看调参进度
+4. 分析参数影响
+5. 下载最优配置
+
+### Python API
+
+```python
+from src.autotune import AutoTuner, get_default_vllm_space
+
+# 创建调参器
+tuner = AutoTuner(
+    model_path="./models/Qwen3.5-4B",
+    gpu_ids="0",
+    strategy="bayesian",
+    objective="throughput",
+    max_trials=20,
+)
+
+# 运行调参
+best_result = tuner.run()
+
+# 查看最优配置
+print(f"Best TPS: {best_result.tps:.2f}")
+print(f"Best config: {best_result.config}")
+```
+
+## WebUI
+
+提供可视化操作界面：
+
+```bash
+streamlit run src/webui/app.py
+```
+
+功能模块：
+- **Model Check**: 快速检测模型是否正常工作
+- **Evaluation**: 运行基准评测
+- **Load Testing**: 配置并运行压测
+- **Auto-Tuning**: vLLM 参数自动调优
+- **Load Balancer**: 管理 vLLM 实例
+- **Results**: 查看历史结果
 
 ## License
 
