@@ -89,6 +89,8 @@ class CEvalBenchmark(BaseBenchmark):
         max_samples: Optional[int] = None,
         token: Optional[str] = None,
         offline: bool = False,
+        source: str = "huggingface",
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         """Load C-Eval dataset
 
@@ -97,6 +99,7 @@ class CEvalBenchmark(BaseBenchmark):
         """
         from datasets import load_dataset
         import os
+        from ..base import MODELSCOPE_MAPPING
 
         # Get token
         if token is None:
@@ -108,18 +111,24 @@ class CEvalBenchmark(BaseBenchmark):
                 except Exception:
                     pass
 
+        # Determine dataset path based on source
+        if source == "modelscope":
+            dataset_path = self.modelscope_path or MODELSCOPE_MAPPING.get("ceval", "iic/CEval")
+        else:
+            dataset_path = self.hf_path
+
         items = []
         subjects_to_load = [subject] if subject else CEVAL_SUBJECTS
 
         for subj in subjects_to_load:
             try:
                 load_kwargs = {
-                    "path": self.hf_path,
+                    "path": dataset_path,
                     "name": subj,
                     "split": split,
                     "trust_remote_code": True,
                 }
-                if token:
+                if token and source != "modelscope":
                     load_kwargs["token"] = token
                 if offline:
                     load_kwargs["download_mode"] = "reuse_cache_if_exists"
@@ -133,8 +142,28 @@ class CEvalBenchmark(BaseBenchmark):
                         if max_samples and len(items) >= max_samples:
                             return items
 
-            except Exception:
-                # Skip subjects that fail to load
+            except Exception as e:
+                # If ModelScope fails, fallback to HuggingFace
+                if source == "modelscope":
+                    print(f"ModelScope load failed for {subj}, trying HuggingFace: {e}")
+                    try:
+                        fallback_kwargs = {
+                            "path": self.hf_path,
+                            "name": subj,
+                            "split": split,
+                            "trust_remote_code": True,
+                        }
+                        if token:
+                            fallback_kwargs["token"] = token
+                        ds = load_dataset(**fallback_kwargs)
+                        for row in ds:
+                            item = self._parse_row(row, subj)
+                            if item:
+                                items.append(item)
+                                if max_samples and len(items) >= max_samples:
+                                    return items
+                    except Exception:
+                        pass
                 continue
 
         return items
