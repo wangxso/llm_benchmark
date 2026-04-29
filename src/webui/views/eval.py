@@ -1,15 +1,10 @@
 """Benchmark evaluation page"""
 
 import streamlit as st
-import asyncio
-import json
 import time
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Optional
-import pandas as pd
+from typing import Dict, Optional
 import sys
-import os
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -19,11 +14,65 @@ if str(project_root) not in sys.path:
 from src.eval import get_benchmark, list_benchmarks, EvalRunner
 from src.webui.views.providers import load_providers, Provider
 from src.webui.views.balancer import get_lb_as_provider
+from src.webui.task_manager import start_task, get_active_tasks, get_all_tasks
+
+
+def _run_eval_background(task_id: str, stop_event, **kwargs):
+    """Background target for evaluation."""
+    from src.webui.task_manager import update_progress, complete_task
+
+    try:
+        update_progress(task_id, 0.05, "Loading benchmark...")
+        benchmark_cls = get_benchmark(kwargs["benchmark_name"])
+        benchmark = benchmark_cls()
+
+        update_progress(task_id, 0.1, "Creating runner...")
+        runner = EvalRunner(
+            benchmark=benchmark,
+            model=kwargs["model"],
+            concurrency=kwargs["concurrency"],
+            timeout=kwargs["timeout"],
+            rate_limit=kwargs["rate_limit"],
+            offline=kwargs["offline"],
+            hf_token=kwargs["hf_token"],
+            api_base_url=kwargs["api_base_url"],
+            api_key=kwargs["api_key"],
+            api_type=kwargs["api_type"],
+            dataset_source=kwargs["dataset_source"],
+        )
+
+        update_progress(task_id, 0.15, "Running evaluation...")
+        start_time = time.time()
+        report = runner.run(
+            prompt_style=kwargs["prompt_style"],
+            max_samples=kwargs["max_samples"],
+            output_dir=kwargs["output_dir"],
+            stop_event=stop_event,
+        )
+        elapsed = time.time() - start_time
+
+        report["_elapsed"] = elapsed
+        complete_task(task_id, report)
+    except Exception as e:
+        from src.webui.task_manager import _fail
+        _fail(task_id, str(e))
 
 
 def render_eval_page():
     st.header("📊 Benchmark Evaluation")
     st.markdown("Run benchmark evaluations on your models.")
+
+    # Show running task status
+    active = {k: v for k, v in get_active_tasks().items() if v.task_type == "eval"}
+    if active:
+        for tid, task in active.items():
+            st.info(f"⏳ Evaluation running: **{task.label}** — {task.progress_text} ({task.elapsed_str()})")
+            st.progress(task.progress)
+            from src.webui.task_manager import stop_task
+            if st.button("⏹ Stop", key=f"stop_eval_{tid}"):
+                stop_task(tid)
+                st.rerun()
+        st.caption("Navigate to **Results** page to see progress. You can continue using other pages.")
 
     # Load providers
     providers = load_providers()
@@ -35,9 +84,6 @@ def render_eval_page():
 
     if not providers:
         st.warning("No providers configured. Please add providers in Settings first.")
-        if st.button("Go to Settings"):
-            st.session_state['nav_to_settings'] = True
-            st.rerun()
         return
 
     # Provider Selection
@@ -160,13 +206,11 @@ def render_eval_page():
     # Run button
     st.markdown("---")
 
-    if st.button("🚀 Run Evaluation", type="primary", use_container_width=True):
+    if st.button("🚀 Run Evaluation", type="primary", width="stretch"):
         if not selected_provider:
             st.error("No provider selected")
             return
 
-        # API key is optional for local vLLM servers
-        # Only warn for remote APIs
         if not selected_provider.api_key and "localhost" not in selected_provider.base_url and "127.0.0.1" not in selected_provider.base_url:
             st.warning(f"Provider '{selected_provider.name}' has no API key configured. This may cause authentication errors.")
 
@@ -174,8 +218,11 @@ def render_eval_page():
             st.error("Please enter a model name")
             return
 
-        # Run evaluation
-        run_evaluation(
+        label = f"{selected_benchmark} ({model})"
+        start_task(
+            task_type="eval",
+            label=label,
+            target_fn=_run_eval_background,
             benchmark_name=selected_benchmark,
             api_type=selected_provider.api_type,
             api_base_url=selected_provider.base_url,
@@ -191,6 +238,9 @@ def render_eval_page():
             output_dir=output_dir,
             dataset_source=dataset_source,
         )
+        st.success(f"✅ Evaluation started in background: **{label}**")
+        st.caption("Go to **Results** page to monitor progress and stop if needed.")
+        st.rerun()
 
     # Display persisted results from previous run
     if "eval_report" in st.session_state and st.session_state["eval_report"]:
@@ -198,108 +248,20 @@ def render_eval_page():
         elapsed = st.session_state.get("eval_elapsed", 0)
         display_eval_results(st.session_state["eval_report"], elapsed)
 
-
-def run_evaluation(
-    benchmark_name: str,
-    api_type: str,
-    api_base_url: str,
-    api_key: str,
-    model: str,
-    hf_token: Optional[str],
-    concurrency: int,
-    timeout: int,
-    rate_limit: float,
-    max_samples: Optional[int],
-    offline: bool,
-    prompt_style: str,
-    output_dir: str,
-    dataset_source: str = "huggingface",
-):
-    """Run the evaluation with progress tracking"""
-
-    # Create progress placeholders
-    progress_container = st.container()
-
-    with progress_container:
-        st.info(f"Starting evaluation: {benchmark_name} (source: {dataset_source})")
-
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        try:
-            # Load benchmark
-            status_text.text("Loading benchmark...")
-            benchmark_cls = get_benchmark(benchmark_name)
-            benchmark = benchmark_cls()
-
-            # Create runner
-            runner = EvalRunner(
-                benchmark=benchmark,
-                model=model,
-                concurrency=concurrency,
-                timeout=timeout,
-                rate_limit=rate_limit,
-                offline=offline,
-                hf_token=hf_token,
-                api_base_url=api_base_url,
-                api_key=api_key,
-                api_type=api_type,
-                dataset_source=dataset_source,
-            )
-
-            # Run evaluation
-            status_text.text("Running evaluation...")
-
-            # Run async evaluation with progress
-            start_time = time.time()
-
-            # We need to run the actual async evaluation
-            report = run_eval_with_progress(
-                runner=runner,
-                prompt_style=prompt_style,
-                max_samples=max_samples,
-                output_dir=output_dir,
-                progress_bar=progress_bar,
-                status_text=status_text,
-            )
-
-            elapsed = time.time() - start_time
-
-            # Display results
-            progress_bar.progress(1.0)
-            status_text.empty()
-
-            st.session_state["eval_report"] = report
-            st.session_state["eval_elapsed"] = elapsed
-            display_eval_results(report, elapsed)
-
-        except Exception as e:
-            progress_bar.empty()
-            status_text.empty()
-            st.error(f"Evaluation failed: {str(e)}")
-            import traceback
-            with st.expander("Show error details"):
-                st.code(traceback.format_exc())
-
-
-def run_eval_with_progress(
-    runner: EvalRunner,
-    prompt_style: str,
-    max_samples: Optional[int],
-    output_dir: str,
-    progress_bar,
-    status_text,
-) -> Dict:
-    """Run evaluation with UI progress updates"""
-
-    # Run the evaluation
-    report = runner.run(
-        prompt_style=prompt_style,
-        max_samples=max_samples,
-        output_dir=output_dir,
-    )
-
-    return report
+    # Also show completed task results
+    completed = {k: v for k, v in get_all_tasks().items()
+                 if v.task_type == "eval" and v.status == "completed" and v.result}
+    if completed:
+        for tid, task in completed.items():
+            if task.result and task.result.get("report_file"):
+                continue  # already shown via session_state
+            if task.result:
+                st.markdown("---")
+                st.subheader(f"📋 {task.label}")
+                elapsed = task.result.get("_elapsed", 0)
+                display_eval_results(task.result, elapsed)
+                st.session_state["eval_report"] = task.result
+                st.session_state["eval_elapsed"] = elapsed
 
 
 def display_eval_results(report: Dict, elapsed: float):

@@ -1,9 +1,10 @@
 """Load testing page"""
 
 import streamlit as st
-import json
 import time
+import os
 from pathlib import Path
+from datetime import datetime
 from typing import Dict, Optional
 import sys
 
@@ -14,11 +15,89 @@ if str(project_root) not in sys.path:
 
 from src.webui.views.providers import load_providers, Provider
 from src.webui.views.balancer import get_lb_as_provider
+from src.webui.task_manager import start_task, get_active_tasks, get_all_tasks
+
+
+def _run_lb_background(task_id: str, stop_event, **kwargs):
+    """Background target for load test."""
+    from src.webui.task_manager import update_progress, complete_task, _fail
+
+    try:
+        update_progress(task_id, 0.05, "Initializing load test...")
+
+        config = {
+            "vllm": {
+                "base_url": kwargs["api_base_url"].rstrip("/").rstrip("/v1"),
+                "model": kwargs["model"],
+            },
+            "load": {
+                "name": f"{kwargs['scenario']}_test",
+                "type": kwargs["scenario"],
+                "base_concurrency": kwargs["base_concurrency"],
+                "duration": kwargs["duration"],
+            },
+            "request": {
+                "max_tokens": kwargs["max_tokens"],
+                "stream": kwargs["stream"],
+            },
+            "dataset": {"mode": kwargs["dataset_mode"]},
+        }
+        if kwargs.get("api_key"):
+            config.setdefault("api", {})["key"] = kwargs["api_key"]
+
+        from src.scenario.manager import ScenarioManager
+        from src.load.generator import LoadGenerator
+        from src.load.controller import TrafficController
+        from src.client.openai_client import OpenAIClient
+        from src.metrics.collector import MetricsCollector
+
+        manager = ScenarioManager(config)
+        generator = LoadGenerator(config)
+        controller = TrafficController(config)
+        client = OpenAIClient(config)
+        collector = MetricsCollector(config)
+
+        update_progress(task_id, 0.1, "Starting metrics collection...")
+        collector.start()
+
+        update_progress(task_id, 0.15, f"Running {kwargs['scenario']} load test...")
+        load_scenario = generator.create_scenario()
+        results = controller.run(load_scenario, generator, client, stop_event=stop_event)
+
+        update_progress(task_id, 0.85, "Generating report...")
+        collector.stop()
+
+        from src.report.generator import ReportGenerator
+        report_gen = ReportGenerator(config)
+        report = report_gen.generate(results, collector.get_metrics())
+
+        output_dir = config.get("output", {}).get("path", "./results")
+        os.makedirs(output_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_file = f"{output_dir}/benchmark_{timestamp}.json"
+        report_gen.save(report, report_file)
+        report["report_file"] = report_file
+
+        complete_task(task_id, report)
+    except Exception as e:
+        _fail(task_id, str(e))
 
 
 def render_lb_page():
     st.header("⚡ Load Testing")
     st.markdown("Run load tests against your LLM API endpoints.")
+
+    # Show running task status
+    active = {k: v for k, v in get_active_tasks().items() if v.task_type == "loadtest"}
+    if active:
+        for tid, task in active.items():
+            st.info(f"⏳ Load test running: **{task.label}** — {task.progress_text} ({task.elapsed_str()})")
+            st.progress(task.progress)
+            from src.webui.task_manager import stop_task
+            if st.button("⏹ Stop", key=f"stop_lb_{tid}"):
+                stop_task(tid)
+                st.rerun()
+        st.caption("Navigate to **Results** page to see progress. You can continue using other pages.")
 
     # Load providers
     providers = load_providers()
@@ -30,9 +109,6 @@ def render_lb_page():
 
     if not providers:
         st.warning("No providers configured. Please add providers in Settings first.")
-        if st.button("Go to Settings"):
-            st.session_state['nav_to_settings'] = True
-            st.rerun()
         return
 
     # Provider Selection
@@ -133,16 +209,19 @@ def render_lb_page():
     # Run button
     st.markdown("---")
 
-    if st.button("🚀 Run Load Test", type="primary", use_container_width=True):
+    if st.button("🚀 Run Load Test", type="primary", width="stretch"):
         if not selected_provider:
             st.error("No provider selected")
             return
 
-        # API key is optional for local vLLM servers
         if not selected_provider.api_key and "localhost" not in selected_provider.base_url and "127.0.0.1" not in selected_provider.base_url:
             st.warning(f"Provider '{selected_provider.name}' has no API key configured. This may cause authentication errors.")
 
-        run_load_test(
+        label = f"{scenario} ({base_concurrency}c, {duration}s)"
+        start_task(
+            task_type="loadtest",
+            label=label,
+            target_fn=_run_lb_background,
             api_base_url=selected_provider.base_url,
             model=model,
             api_key=selected_provider.api_key,
@@ -154,120 +233,22 @@ def render_lb_page():
             max_tokens=max_tokens,
             dataset_mode=dataset_mode,
         )
+        st.success(f"✅ Load test started in background: **{label}**")
+        st.caption("Go to **Results** page to monitor progress and stop if needed.")
+        st.rerun()
 
     # Display persisted results from previous run
     if "lb_report" in st.session_state and st.session_state["lb_report"]:
         st.markdown("---")
         display_load_test_results(st.session_state["lb_report"])
 
-
-def run_load_test(
-    api_base_url: str,
-    model: str,
-    api_key: Optional[str],
-    api_type: str,
-    stream: bool,
-    scenario: str,
-    base_concurrency: int,
-    duration: int,
-    max_tokens: int,
-    dataset_mode: str,
-):
-    """Execute the load test"""
-
-    from src.config import load_config
-    from src.scenario.manager import ScenarioManager
-    from src.load.generator import LoadGenerator
-    from src.load.controller import TrafficController
-    from src.client.openai_client import OpenAIClient
-    from src.metrics.collector import MetricsCollector
-
-    # Build config from UI inputs
-    config = {
-        "vllm": {
-            "base_url": api_base_url.rstrip("/").rstrip("/v1"),  # Let client handle /v1
-            "model": model,
-        },
-        "load": {
-            "name": f"{scenario}_test",
-            "type": scenario,
-            "base_concurrency": base_concurrency,
-            "duration": duration,
-        },
-        "request": {
-            "max_tokens": max_tokens,
-            "stream": stream,
-        },
-        "dataset": {
-            "mode": dataset_mode,
-        },
-    }
-
-    # Add API key to headers if provided
-    if api_key:
-        config.setdefault("api", {})["key"] = api_key
-
-    progress_container = st.container()
-
-    with progress_container:
-        status = st.empty()
-        progress_bar = st.progress(0)
-
-        try:
-            status.info("🔧 Initializing load test...")
-
-            manager = ScenarioManager(config)
-            generator = LoadGenerator(config)
-            controller = TrafficController(config)
-            client = OpenAIClient(config)
-            collector = MetricsCollector(config)
-
-            status.info("📊 Starting metrics collection...")
-            collector.start()
-
-            status.info(f"⚡ Running {scenario} load test at {base_concurrency} concurrency for {duration}s...")
-            progress_bar.progress(0.3)
-
-            # Create the load scenario object
-            load_scenario = generator.create_scenario()
-            results = controller.run(load_scenario, generator, client)
-
-            progress_bar.progress(0.8)
-            status.info("📈 Generating report...")
-
-            collector.stop()
-
-            from src.report.generator import ReportGenerator
-            report_gen = ReportGenerator(config)
-            report = report_gen.generate(results, collector.get_metrics())
-
-            # Save results to file
-            import os
-            from datetime import datetime
-            output_dir = config.get("output", {}).get("path", "./results")
-            os.makedirs(output_dir, exist_ok=True)
-
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            report_file = f"{output_dir}/benchmark_{timestamp}.json"
-
-            report_gen.save(report, report_file)
-            report["report_file"] = report_file
-
-            progress_bar.progress(1.0)
-            status.empty()
-            progress_bar.empty()
-
-            # Persist and display results
-            st.session_state["lb_report"] = report
-            display_load_test_results(report)
-
-        except Exception as e:
-            status.empty()
-            progress_bar.empty()
-            st.error(f"Load test failed: {str(e)}")
-            import traceback
-            with st.expander("Show error details"):
-                st.code(traceback.format_exc())
+    # Show completed task results
+    completed = {k: v for k, v in get_all_tasks().items()
+                 if v.task_type == "loadtest" and v.status == "completed" and v.result}
+    if completed:
+        for tid, task in completed.items():
+            if task.result:
+                st.session_state["lb_report"] = task.result
 
 
 def display_load_test_results(report: Dict):

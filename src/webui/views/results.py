@@ -3,6 +3,7 @@
 import streamlit as st
 import json
 import glob
+import time
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
@@ -12,9 +13,74 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def _format_elapsed(seconds: float) -> str:
+    """Format seconds into human-readable elapsed time."""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    elif seconds < 3600:
+        return f"{seconds / 60:.0f}m {seconds % 60:.0f}s"
+    else:
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        return f"{h:.0f}h {m:.0f}m"
+
+
+def _render_active_tasks():
+    """Render active tasks panel with progress and stop controls."""
+    from src.webui.task_manager import get_active_tasks, has_active_tasks, stop_task
+
+    if not has_active_tasks():
+        return False
+
+    tasks = get_active_tasks()
+    st.subheader("🏃 Active Tasks")
+
+    task_type_icons = {
+        "eval": "📊",
+        "loadtest": "⚡",
+        "autotune": "🔧",
+    }
+
+    for tid, task in tasks.items():
+        icon = task_type_icons.get(task.task_type, "🔄")
+        elapsed = time.time() - task.started_at
+
+        with st.container():
+            col1, col2, col3 = st.columns([3, 1, 1])
+
+            with col1:
+                st.markdown(f"**{icon} {task.label}**")
+                st.progress(task.progress)
+                if task.progress_text:
+                    st.caption(task.progress_text)
+
+            with col2:
+                st.metric("Elapsed", _format_elapsed(elapsed))
+                st.caption(f"Status: {task.status}")
+
+            with col3:
+                st.markdown("")
+                st.markdown("")
+                if st.button("⏹ Stop", key=f"stop_result_{tid}", width="stretch"):
+                    stop_task(tid)
+                    st.rerun()
+
+        st.divider()
+
+    return True
+
+
 def render_results_page():
     st.header("📁 Results")
     st.markdown("Browse and analyze evaluation and load test results.")
+
+    # Active tasks panel
+    has_active = _render_active_tasks()
+
+    # Auto-refresh while tasks are active
+    if has_active:
+        time.sleep(2)
+        st.rerun()
 
     # Results directory
     results_dir = st.text_input("Results Directory", value="./results", key="results_dir")
@@ -610,4 +676,4 @@ def show_autotune_detail(data: Dict):
                 "Status": "✓" if h.get("error") is None else "✗",
             })
 
-        st.dataframe(history_data, use_container_width=True, hide_index=True)
+        st.dataframe(history_data, width="stretch", hide_index=True)

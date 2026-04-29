@@ -77,7 +77,7 @@ def render_check_page():
     st.markdown("### Test Cases")
     st.caption("Tests basic math, knowledge, logic, coding, and Chinese capabilities.")
 
-    if st.button("🚀 Run Check", type="primary", use_container_width=True):
+    if st.button("🚀 Run Check", type="primary", width="stretch"):
         if not selected_provider:
             st.error("No provider selected")
             return

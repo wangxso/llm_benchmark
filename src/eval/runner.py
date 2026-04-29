@@ -270,6 +270,7 @@ class EvalRunner:
         prompt_style: str = "zero_shot",
         max_samples: Optional[int] = None,
         subject: Optional[str] = None,
+        stop_event=None,
     ) -> tuple:
         """Run the evaluation asynchronously"""
         import aiohttp
@@ -339,6 +340,8 @@ class EvalRunner:
                 total=len(tasks),
                 desc=f"Evaluating {self.benchmark.name}",
             ):
+                if stop_event and stop_event.is_set():
+                    break
                 result = await f
                 results.append(result)
 
@@ -433,6 +436,7 @@ class EvalRunner:
         max_samples: Optional[int] = None,
         subject: Optional[str] = None,
         output_dir: Optional[str] = None,
+        stop_event=None,
     ) -> Dict:
         """Run the evaluation (sync wrapper)"""
         report, results = asyncio.run(
@@ -440,6 +444,7 @@ class EvalRunner:
                 prompt_style=prompt_style,
                 max_samples=max_samples,
                 subject=subject,
+                stop_event=stop_event,
             )
         )
 

@@ -101,8 +101,9 @@ class AutoTuner:
         self.progress = TuningProgress(total_trials=max_trials)
         self._study = None
 
-    def run(self) -> TuningResult:
+    def run(self, stop_event=None) -> TuningResult:
         """Run the auto-tuning process (synchronous wrapper)."""
+        self._stop_event = stop_event
         return _run_async(self._run_optimization())
 
     async def _run_optimization(self) -> TuningResult:
@@ -133,6 +134,10 @@ class AutoTuner:
 
         # Define objective function - must be sync for optuna
         def objective(trial: optuna.Trial) -> float:
+            if self._stop_event and self._stop_event.is_set():
+                if self._study:
+                    self._study.stop()
+                return float("-inf")
             # Run async in a new thread to avoid event loop conflicts
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(
@@ -159,6 +164,8 @@ class AutoTuner:
             else:
                 # Manual loop for random/grid (sync, so no await)
                 for trial_id in range(self.max_trials):
+                    if self._stop_event and self._stop_event.is_set():
+                        break
                     # Run each evaluation in a separate thread
                     with concurrent.futures.ThreadPoolExecutor() as executor:
                         future = executor.submit(

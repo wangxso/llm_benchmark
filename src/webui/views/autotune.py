@@ -3,10 +3,8 @@
 import streamlit as st
 import json
 import time
-import asyncio
 import sys
 from pathlib import Path
-from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 # Add project root to path
@@ -27,6 +25,58 @@ from src.autotune import (
 from src.autotune.config import get_default_vllm_space, get_high_throughput_space, get_low_latency_space
 from src.autotune.search import create_search_strategy
 from src.device import list_devices, detect_device
+from src.webui.task_manager import start_task, get_active_tasks, get_all_tasks, stop_task
+
+
+def _run_autotune_background(task_id: str, stop_event, **kwargs):
+    """Background target for auto-tuning."""
+    from src.webui.task_manager import update_progress, complete_task, _fail
+    from src.autotune.optimizer import TuningProgress
+
+    try:
+        update_progress(task_id, 0.0, "Starting auto-tuning...")
+
+        def progress_callback(progress: TuningProgress):
+            pct = progress.completed_trials / progress.total_trials if progress.total_trials > 0 else 0
+            text = f"Trial {progress.current_trial}/{progress.total_trials} (best: {progress.best_score:.2f})"
+            update_progress(task_id, pct, text)
+
+        tuner = AutoTuner(
+            model_path=kwargs["model_path"],
+            gpu_ids=kwargs["gpu_ids"],
+            device=kwargs["device"],
+            search_space=kwargs["search_space"],
+            strategy=kwargs["strategy"],
+            objective=kwargs["objective"],
+            max_trials=kwargs["max_trials"],
+            startup_timeout=kwargs["startup_timeout"],
+            seed=kwargs["seed"],
+            verbose=True,
+            log_dir=f"{kwargs['output_dir']}/logs",
+            progress_callback=progress_callback,
+        )
+
+        result = tuner.run(stop_event=stop_event)
+
+        # Save results
+        output_path = Path(kwargs["output_dir"])
+        output_path.mkdir(parents=True, exist_ok=True)
+        save_tuning_report(tuner.results, output_path / "tuning_report.json")
+        if result and result.error is None:
+            generate_deploy_template(
+                result.config,
+                output_path / "best_config.yaml",
+                model_path=kwargs["model_path"],
+                gpu_ids=kwargs["gpu_ids"],
+            )
+
+        complete_task(task_id, {
+            "best": result,
+            "results": tuner.results,
+            "output_dir": kwargs["output_dir"],
+        })
+    except Exception as e:
+        _fail(task_id, str(e))
 
 
 def render_autotune_page():
@@ -35,14 +85,33 @@ def render_autotune_page():
     st.markdown("Automatically find optimal vLLM parameters using Bayesian optimization.")
 
     # Initialize session state
-    if "autotune_running" not in st.session_state:
-        st.session_state["autotune_running"] = False
     if "autotune_results" not in st.session_state:
         st.session_state["autotune_results"] = []
     if "autotune_best" not in st.session_state:
         st.session_state["autotune_best"] = None
     if "autotune_progress" not in st.session_state:
         st.session_state["autotune_progress"] = {}
+
+    # Show running task status
+    active = {k: v for k, v in get_active_tasks().items() if v.task_type == "autotune"}
+    if active:
+        for tid, task in active.items():
+            st.info(f"⏳ Tuning running: **{task.label}** — {task.progress_text} ({task.elapsed_str()})")
+            st.progress(task.progress)
+            if st.button("⏹ Stop", key=f"stop_autotune_{tid}"):
+                stop_task(tid)
+                st.rerun()
+        st.caption("Navigate to **Results** page to see progress. You can continue using other pages.")
+
+    # Check for completed tasks and update session state
+    completed = {k: v for k, v in get_all_tasks().items()
+                 if v.task_type == "autotune" and v.status == "completed" and v.result}
+    for tid, task in completed.items():
+        if task.result and isinstance(task.result, dict):
+            if task.result.get("results"):
+                st.session_state["autotune_results"] = task.result["results"]
+            if task.result.get("best"):
+                st.session_state["autotune_best"] = task.result["best"]
 
     # Tabs for different sections
     tab1, tab2, tab3 = st.tabs(["⚙️ Configuration", "🎯 Run Tuning", "📊 Results"])
@@ -296,7 +365,7 @@ def display_search_space(space: SearchSpace):
             "Range": range_str
         })
 
-    st.dataframe(param_data, use_container_width=True, hide_index=True)
+    st.dataframe(param_data, width="stretch", hide_index=True)
 
     # Show constraints
     if space.constraints:
@@ -321,22 +390,23 @@ def render_run_section():
         if not model_path:
             st.warning("Please configure model path in the Configuration tab.")
 
+    # Check if tuning is running
+    active = {k: v for k, v in get_active_tasks().items() if v.task_type == "autotune"}
+    is_running = len(active) > 0
+
     with col2:
         run_button = st.button(
             "🚀 Start Tuning",
             type="primary",
-            disabled=not model_path or st.session_state.get("autotune_running", False),
-            use_container_width=True
+            disabled=not model_path or is_running,
+            width="stretch"
         )
-
-    if st.session_state.get("autotune_running"):
-        st.warning("⏳ Tuning in progress...")
 
     # Run tuning
     if run_button and model_path:
-        run_autotuning()
+        _start_autotuning()
 
-    # Display progress
+    # Display progress from completed results
     if st.session_state.get("autotune_results"):
         display_progress()
 
@@ -345,11 +415,8 @@ def render_run_section():
         display_best_result(st.session_state["autotune_best"])
 
 
-def run_autotuning():
-    """Execute auto-tuning process."""
-    from src.autotune.optimizer import TuningProgress
-
-    # Get configuration
+def _start_autotuning():
+    """Start auto-tuning as a background task."""
     model_path = st.session_state.get("autotune_model_path", "")
     gpu_ids = st.session_state.get("autotune_gpu_ids", "0")
     device = st.session_state.get("autotune_device", "nvidia")
@@ -358,8 +425,6 @@ def run_autotuning():
     objective = st.session_state.get("autotune_objective", "throughput")
     strategy = st.session_state.get("autotune_strategy", "bayesian")
     max_trials = st.session_state.get("autotune_max_trials", 10)
-    concurrency = st.session_state.get("autotune_concurrency", 100)
-    duration = st.session_state.get("autotune_duration", 60)
     startup_timeout = st.session_state.get("autotune_startup_timeout", 300)
     seed = st.session_state.get("autotune_seed", 42)
     output_dir = st.session_state.get("autotune_output_dir", "./results/autotune")
@@ -375,23 +440,13 @@ def run_autotuning():
     elif preset == "Low Latency":
         search_space = get_low_latency_space(gpu_count)
     else:
-        # Build custom search space
         search_space = build_custom_search_space(gpu_count)
 
-    # Progress callback
-    progress_placeholder = st.empty()
-    results_placeholder = st.empty()
-
-    def progress_callback(progress: TuningProgress):
-        st.session_state["autotune_progress"] = {
-            "current_trial": progress.current_trial,
-            "completed_trials": progress.completed_trials,
-            "total_trials": progress.total_trials,
-            "best_score": progress.best_score,
-        }
-
-    # Create tuner
-    tuner = AutoTuner(
+    label = f"{strategy} ({max_trials} trials)"
+    start_task(
+        task_type="autotune",
+        label=label,
+        target_fn=_run_autotune_background,
         model_path=model_path,
         gpu_ids=gpu_ids,
         device=device,
@@ -401,62 +456,11 @@ def run_autotuning():
         max_trials=max_trials,
         startup_timeout=startup_timeout,
         seed=seed,
-        verbose=True,  # Enable verbose output for debugging
-        log_dir=f"{output_dir}/logs",
-        progress_callback=progress_callback,
+        output_dir=output_dir,
     )
-
-    # Run tuning in background
-    st.session_state["autotune_running"] = True
-    st.session_state["autotune_results"] = []
-
-    try:
-        with progress_placeholder.container():
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-
-            # Run tuning
-            best_result = None
-
-            # We need to run asynchronously, but Streamlit doesn't support async well
-            # So we use the sync wrapper
-            result = tuner.run()
-
-            # Update results
-            st.session_state["autotune_results"] = tuner.results
-            st.session_state["autotune_best"] = result
-
-            # Show any errors from results
-            errors = [r for r in tuner.results if r.error]
-            if errors:
-                with st.expander(f"⚠️ {len(errors)} trials failed", expanded=True):
-                    for r in errors[:5]:  # Show first 5 errors
-                        st.error(f"Trial {r.trial_id}: {r.error}")
-
-            # Save results
-            if result and result.error is None:
-                output_path = Path(output_dir)
-                output_path.mkdir(parents=True, exist_ok=True)
-
-                save_tuning_report(tuner.results, output_path / "tuning_report.json")
-                generate_deploy_template(
-                    result.config,
-                    output_path / "best_config.yaml",
-                    model_path=model_path,
-                    gpu_ids=gpu_ids,
-                )
-                st.success(f"✅ Tuning completed! Results saved to {output_dir}")
-            else:
-                st.warning("⚠️ Tuning completed but no valid results found")
-
-    except Exception as e:
-        st.error(f"Tuning failed: {str(e)}")
-        with st.expander("Show error details"):
-            import traceback
-            st.code(traceback.format_exc())
-
-    finally:
-        st.session_state["autotune_running"] = False
+    st.success(f"✅ Auto-tuning started in background: **{label}**")
+    st.caption("Go to **Results** page to monitor progress and stop if needed.")
+    st.rerun()
 
 
 def build_custom_search_space(gpu_count: int) -> SearchSpace:
@@ -507,23 +511,22 @@ def build_custom_search_space(gpu_count: int) -> SearchSpace:
 
 
 def display_progress():
-    """Display tuning progress."""
-    progress = st.session_state.get("autotune_progress", {})
+    """Display tuning progress from results."""
+    results = st.session_state.get("autotune_results", [])
+    if not results:
+        return
 
-    if progress:
-        col1, col2, col3, col4 = st.columns(4)
+    completed = len(results)
+    best_score = max((r.score for r in results), default=0)
 
-        with col1:
-            st.metric("Current Trial", progress.get("current_trial", 0))
-
-        with col2:
-            st.metric("Completed", progress.get("completed_trials", 0))
-
-        with col3:
-            st.metric("Total Trials", progress.get("total_trials", 0))
-
-        with col4:
-            st.metric("Best Score", f"{progress.get('best_score', 0):.2f}")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Completed Trials", completed)
+    with col2:
+        st.metric("Best Score", f"{best_score:.2f}")
+    with col3:
+        errors = sum(1 for r in results if r.error)
+        st.metric("Errors", errors)
 
 
 def display_best_result(result: TuningResult):
@@ -582,15 +585,15 @@ def render_results_section():
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("📥 Download JSON Report", use_container_width=True):
+        if st.button("📥 Download JSON Report", width="stretch"):
             download_json_report(results)
 
     with col2:
-        if st.button("📥 Download Best Config", use_container_width=True):
+        if st.button("📥 Download Best Config", width="stretch"):
             download_best_config()
 
     with col3:
-        if st.button("📥 Download CSV History", use_container_width=True):
+        if st.button("📥 Download CSV History", width="stretch"):
             download_csv_history(results)
 
 
@@ -612,7 +615,7 @@ def display_results_table(results: List[TuningResult]):
             "Status": "✓" if r.error is None else "✗",
         })
 
-    st.dataframe(table_data, use_container_width=True, hide_index=True)
+    st.dataframe(table_data, width="stretch", hide_index=True)
 
 
 def download_json_report(results: List[TuningResult]):

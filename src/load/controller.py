@@ -39,18 +39,18 @@ class TrafficController:
         self._request_count = 0
         self._error_count = 0
 
-    def run(self, scenario: LoadScenario, generator, client) -> Dict[str, Any]:
+    def run(self, scenario: LoadScenario, generator, client, stop_event=None) -> Dict[str, Any]:
         """Run load test based on scenario type"""
         if scenario.scenario_type == LoadType.FIXED:
-            return asyncio.run(self._run_fixed(scenario, generator, client))
+            return asyncio.run(self._run_fixed(scenario, generator, client, stop_event))
         elif scenario.scenario_type == LoadType.STEP:
-            return asyncio.run(self._run_step(scenario, generator, client))
+            return asyncio.run(self._run_step(scenario, generator, client, stop_event))
         elif scenario.scenario_type == LoadType.BURST:
-            return asyncio.run(self._run_burst(scenario, generator, client))
+            return asyncio.run(self._run_burst(scenario, generator, client, stop_event))
         elif scenario.scenario_type == LoadType.STREAMING:
-            return asyncio.run(self._run_streaming(scenario, generator, client))
+            return asyncio.run(self._run_streaming(scenario, generator, client, stop_event))
         elif scenario.scenario_type == LoadType.LONG_CONTEXT:
-            return asyncio.run(self._run_long_context(scenario, generator, client))
+            return asyncio.run(self._run_long_context(scenario, generator, client, stop_event))
         else:
             raise ValueError(f"Unknown load type: {scenario.scenario_type}")
 
@@ -123,7 +123,7 @@ class TrafficController:
         }
 
     async def _run_fixed(
-        self, scenario: LoadScenario, generator, client
+        self, scenario: LoadScenario, generator, client, stop_event=None
     ) -> Dict[str, Any]:
         """Fixed concurrency load test"""
         print(f"[TrafficController] Running fixed concurrency: {scenario.concurrency}")
@@ -137,8 +137,8 @@ class TrafficController:
         start_time = time.time()
         active_tasks = set()
 
-        while time.time() - start_time < duration:
-            while len(active_tasks) < scenario.concurrency:
+        while time.time() - start_time < duration and not (stop_event and stop_event.is_set()):
+            while len(active_tasks) < scenario.concurrency and not (stop_event and stop_event.is_set()):
                 request = generator.generate_request()
                 task = asyncio.create_task(self._send_request(client, request))
                 active_tasks.add(task)
@@ -152,12 +152,14 @@ class TrafficController:
                 await task
 
         if active_tasks:
+            for t in active_tasks:
+                t.cancel()
             await asyncio.gather(*active_tasks, return_exceptions=True)
 
         return self._aggregate_results()
 
     async def _run_step(
-        self, scenario: LoadScenario, generator, client
+        self, scenario: LoadScenario, generator, client, stop_event=None
     ) -> Dict[str, Any]:
         """Step/incremental concurrency load test"""
         print(
@@ -171,14 +173,14 @@ class TrafficController:
         current_concurrency = scenario.concurrency
         step_count = 0
 
-        while current_concurrency <= scenario.max_concurrency:
+        while current_concurrency <= scenario.max_concurrency and not (stop_event and stop_event.is_set()):
             print(f"[Step] Level {step_count + 1}: concurrency={current_concurrency}")
 
             start_time = time.time()
             active_tasks = set()
 
-            while time.time() - start_time < scenario.step_duration:
-                while len(active_tasks) < current_concurrency:
+            while time.time() - start_time < scenario.step_duration and not (stop_event and stop_event.is_set()):
+                while len(active_tasks) < current_concurrency and not (stop_event and stop_event.is_set()):
                     request = generator.generate_request()
                     task = asyncio.create_task(self._send_request(client, request))
                     active_tasks.add(task)
@@ -192,6 +194,8 @@ class TrafficController:
                     await task
 
             if active_tasks:
+                for t in active_tasks:
+                    t.cancel()
                 await asyncio.gather(*active_tasks, return_exceptions=True)
 
             current_concurrency += scenario.step_increment
@@ -200,7 +204,7 @@ class TrafficController:
         return self._aggregate_results()
 
     async def _run_burst(
-        self, scenario: LoadScenario, generator, client
+        self, scenario: LoadScenario, generator, client, stop_event=None
     ) -> Dict[str, Any]:
         """Burst/peak load test"""
         print(
@@ -216,6 +220,8 @@ class TrafficController:
         print(f"[Burst] Launching {scenario.peak_concurrency} concurrent requests")
 
         for _ in range(scenario.peak_concurrency):
+            if stop_event and stop_event.is_set():
+                break
             request = generator.generate_request()
             task = asyncio.create_task(self._send_request(client, request))
             active_tasks.add(task)
@@ -227,7 +233,7 @@ class TrafficController:
         return self._aggregate_results()
 
     async def _run_streaming(
-        self, scenario: LoadScenario, generator, client
+        self, scenario: LoadScenario, generator, client, stop_event=None
     ) -> Dict[str, Any]:
         """Streaming response load test"""
         print(
@@ -237,13 +243,13 @@ class TrafficController:
         old_stream = generator.stream
         generator.stream = True
 
-        result = await self._run_fixed(scenario, generator, client)
+        result = await self._run_fixed(scenario, generator, client, stop_event)
 
         generator.stream = old_stream
         return result
 
     async def _run_long_context(
-        self, scenario: LoadScenario, generator, client
+        self, scenario: LoadScenario, generator, client, stop_event=None
     ) -> Dict[str, Any]:
         """Long context load test"""
         print(
@@ -253,7 +259,7 @@ class TrafficController:
         old_max_input = generator.dataset.max_input_len
         generator.dataset.max_input_len = scenario.max_input_len
 
-        result = await self._run_fixed(scenario, generator, client)
+        result = await self._run_fixed(scenario, generator, client, stop_event)
 
         generator.dataset.max_input_len = old_max_input
         return result
