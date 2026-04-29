@@ -1,6 +1,7 @@
 """Configuration evaluator for Auto-Tuning Agent."""
 
 import asyncio
+import json
 import os
 import signal
 import subprocess
@@ -8,7 +9,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from .config import TuningConfig, TuningResult
 from src.device import get_device_profile
@@ -57,6 +58,229 @@ class ConfigEvaluator:
         self._current_instance: Optional[InstanceHandle] = None
         self._trial_count = 0  # Track trials to increment port
 
+        # Read model architecture for memory estimation
+        self._model_arch = self._read_model_arch()
+
+    def _read_model_arch(self) -> Dict[str, int]:
+        """Read model architecture parameters from config.json."""
+        config_path = Path(self.model_path) / "config.json"
+        if not config_path.exists():
+            return {}
+        try:
+            with open(config_path) as f:
+                cfg = json.load(f)
+            return {
+                "hidden_size": cfg.get("hidden_size", 0),
+                "num_layers": cfg.get("num_hidden_layers", 0),
+                "num_kv_heads": cfg.get("num_key_value_heads", cfg.get("num_attention_heads", 0)),
+                "head_dim": cfg.get("head_dim", 0) or (cfg.get("hidden_size", 0) // max(cfg.get("num_attention_heads", 1), 1)),
+            }
+        except Exception:
+            return {}
+
+    def _estimate_kv_cache_bytes(self, max_model_len: int, block_size: int = 16) -> int:
+        """Estimate KV cache memory in bytes for the model."""
+        if not self._model_arch:
+            return 0
+        # Per-token KV: 2 (K+V) * num_layers * num_kv_heads * head_dim * 2 bytes (bf16)
+        per_token = 2 * self._model_arch["num_layers"] * self._model_arch["num_kv_heads"] * self._model_arch["head_dim"] * 2
+        # Round up to block_size
+        num_blocks = (max_model_len + block_size - 1) // block_size
+        return num_blocks * block_size * per_token
+
+    def _get_gpu_memory_bytes(self) -> int:
+        """Get total GPU memory in bytes for the first GPU in gpu_ids."""
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            gpu_idx = int(self.gpu_ids.split(",")[0].strip())
+            handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_idx)
+            info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            pynvml.nvmlShutdown()
+            return info.total
+        except Exception:
+            # Fallback: try nvidia-smi
+            try:
+                result = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                # Take the first GPU's value
+                mem_mib = int(result.stdout.strip().split("\n")[0].strip())
+                return mem_mib * 1024 * 1024
+            except Exception:
+                return 80 * 1024 ** 3
+
+    def _get_gpu_free_memory_bytes(self) -> int:
+        """Get current free GPU memory in bytes (actual, from nvidia-smi)."""
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5,
+            )
+            mem_mib = int(result.stdout.strip().split("\n")[0].strip())
+            return mem_mib * 1024 * 1024
+        except Exception:
+            return 0
+
+    def compute_feasible_ranges(self) -> Dict[str, Any]:
+        """Compute feasible parameter ranges based on actual GPU memory.
+
+        Uses nvidia-smi to read real free memory, then calculates what
+        gpu_memory_utilization and max_model_len combinations are feasible.
+        """
+        gpu_total = self._get_gpu_memory_bytes()
+        if gpu_total <= 0 or not self._model_arch:
+            return {}
+
+        # Get actual free memory to estimate model + overhead footprint
+        gpu_free = self._get_gpu_free_memory_bytes()
+        # Occupied = total - free (model weights, CUDA context, etc.)
+        gpu_occupied = gpu_total - gpu_free if gpu_free > 0 else 0
+
+        # Estimate model weight memory as a fallback
+        # Multiplier 16 accounts for gated MLP (gate+up+down), attention (q+k+v+o),
+        # embeddings, layer norms, etc. Validated against Qwen3-4B (7.56 GiB actual).
+        hs = self._model_arch["hidden_size"]
+        nl = self._model_arch["num_layers"]
+        est_weight_bytes = int(16 * hs * hs * nl * 2)
+        overhead_bytes = int(2.0 * 1024 ** 3)
+
+        # Use the larger of: actual occupied or estimated (conservative)
+        if gpu_occupied > 0:
+            # Actual occupied includes model + CUDA context + other processes
+            # Add a small safety margin (5%)
+            fixed_memory = int(gpu_occupied * 1.05)
+            # But don't exceed what gpu_memory_utilization would allow
+            fixed_memory = max(fixed_memory, est_weight_bytes + overhead_bytes)
+        else:
+            fixed_memory = est_weight_bytes + overhead_bytes
+
+        min_util = fixed_memory / gpu_total
+
+        # Per-token KV cache
+        per_token = self._estimate_kv_cache_bytes(1)  # bytes per token
+
+        # Compute max_model_len for each gpu_memory_utilization level
+        util_range = [round(v, 2) for v in [0.7, 0.75, 0.8, 0.85, 0.9, 0.95] if v >= min_util]
+        max_len_for_util = {}
+
+        for util in util_range:
+            remaining = gpu_total * util - fixed_memory
+            if remaining <= 0:
+                continue
+            max_tokens = int(remaining / per_token) if per_token > 0 else 131072
+            # Round down to nearest 1024, cap at 131072
+            max_tokens = min((max_tokens // 1024) * 1024, 131072)
+            max_tokens = max(max_tokens, 2048)  # minimum useful context
+            max_len_for_util[util] = max_tokens
+
+        return {
+            "gpu_total_gib": gpu_total / 1024**3,
+            "gpu_free_gib": gpu_free / 1024**3,
+            "fixed_memory_gib": fixed_memory / 1024**3,
+            "min_gpu_mem_util": round(min_util, 2),
+            "gpu_mem_util_range": util_range,
+            "max_model_len_for_util": max_len_for_util,
+        }
+
+    def constrain_search_space(self, space: "SearchSpace") -> "SearchSpace":
+        """Filter search space to only include feasible configurations."""
+        from .config import SearchSpace, ParameterRange
+
+        ranges = self.compute_feasible_ranges()
+        if not ranges:
+            return space
+
+        min_util = ranges["min_gpu_mem_util"]
+        max_len_map = ranges["max_model_len_for_util"]
+
+        if self.verbose:
+            print(f"\n[ConfigEvaluator] GPU memory: {ranges['gpu_total_gib']:.1f} GiB, free: {ranges.get('gpu_free_gib', 0):.1f} GiB")
+            print(f"  Fixed memory (model+overhead): {ranges['fixed_memory_gib']:.1f} GiB")
+            print(f"  Min gpu_mem_util: {min_util}")
+            print(f"  Feasible ranges:")
+            for util, max_len in max_len_map.items():
+                print(f"    gpu_mem_util={util}: max_model_len={max_len}")
+
+        new_params = []
+        for param in space.parameters:
+            if param.name == "gpu_memory_utilization":
+                # Filter to only feasible util values
+                feasible_vals = ranges["gpu_mem_util_range"]
+                if param.values:
+                    feasible_vals = [v for v in param.values if v >= min_util]
+                elif param.min_val is not None:
+                    feasible_vals = [v for v in feasible_vals if v >= param.min_val and v <= param.max_val]
+                if feasible_vals:
+                    new_params.append(ParameterRange(
+                        name=param.name,
+                        values=feasible_vals,
+                    ))
+                else:
+                    new_params.append(param)  # Keep original if no feasible values
+            elif param.name == "max_model_len":
+                if param.values and max_len_map:
+                    # max_model_len must work with ALL feasible gpu_mem_util values
+                    # Use the most conservative (smallest) max
+                    min_feasible_len = min(max_len_map.values())
+                    feasible_vals = sorted(set(v for v in param.values if v <= min_feasible_len))
+                    if feasible_vals:
+                        new_params.append(ParameterRange(name=param.name, values=feasible_vals))
+                    else:
+                        # All values too large — use the smallest feasible length
+                        new_params.append(ParameterRange(name=param.name, values=[min_feasible_len]))
+                else:
+                    new_params.append(param)
+            else:
+                new_params.append(param)
+
+        return SearchSpace(parameters=new_params, constraints=space.constraints)
+
+    def check_config_feasibility(self, config: TuningConfig) -> Tuple[bool, str]:
+        """Check if a config is likely feasible before launching vLLM.
+
+        Returns (feasible, reason). If not feasible, reason explains why.
+        """
+        if not self._model_arch:
+            # Can't estimate, allow it
+            return True, ""
+
+        gpu_total = self._get_gpu_memory_bytes()
+        if gpu_total <= 0:
+            return True, ""
+
+        # Available memory after gpu_memory_utilization
+        available = gpu_total * config.gpu_memory_utilization
+
+        # Estimate model weight memory.
+        # Multiplier 16 accounts for gated MLP + attention + embeddings + norms.
+        hs = self._model_arch["hidden_size"]
+        nl = self._model_arch["num_layers"]
+        est_weight_bytes = int(16 * hs * hs * nl * 2)  # bf16
+
+        # CUDA graph + framework overhead: ~2.0 GiB (conservative)
+        overhead_bytes = int(2.0 * 1024 ** 3)
+
+        # Remaining for KV cache
+        remaining = available - est_weight_bytes - overhead_bytes
+
+        if remaining <= 0:
+            return False, (
+                f"No memory left for KV cache: gpu_mem_util={config.gpu_memory_utilization:.2f} "
+                f"provides {available / 1024**3:.1f} GiB, model+overhead ~{(est_weight_bytes + overhead_bytes) / 1024**3:.1f} GiB"
+            )
+
+        # Check if KV cache fits
+        kv_needed = self._estimate_kv_cache_bytes(config.max_model_len)
+        if kv_needed > remaining:
+            return False, (
+                f"KV cache needs {kv_needed / 1024**3:.2f} GiB but only {remaining / 1024**3:.2f} GiB available "
+                f"(gpu_mem_util={config.gpu_memory_utilization:.2f}, max_model_len={config.max_model_len})"
+            )
+
+        return True, ""
+
     async def evaluate(
         self,
         config: TuningConfig,
@@ -69,6 +293,15 @@ class ConfigEvaluator:
             config=config,
             objective=objective,
         )
+
+        # Pre-check: skip configs that are provably infeasible
+        feasible, reason = self.check_config_feasibility(config)
+        if not feasible:
+            result.error = f"Skipped (infeasible): {reason}"
+            result.score = float("-inf")
+            if self.verbose:
+                print(f"[Trial {trial_id}] SKIPPED: {reason}")
+            return result
 
         try:
             # Start vLLM instance

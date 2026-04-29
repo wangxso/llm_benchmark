@@ -128,6 +128,16 @@ class AutoTuner:
                     print(f"  - {param.name}: [{param.min_val}, {param.max_val}]")
             print("=" * 60)
 
+        # Constrain search space based on GPU memory
+        self.search_space = self.evaluator.constrain_search_space(self.search_space)
+        if self.verbose:
+            print(f"\n[AutoTuner] Constrained Search Space:")
+            for param in self.search_space.parameters:
+                if param.values:
+                    print(f"  - {param.name}: {param.values}")
+                else:
+                    print(f"  - {param.name}: [{param.min_val}, {param.max_val}]")
+
         # Create study
         direction = "maximize"
         self._study = self.search_strategy.create_study(direction=direction)
