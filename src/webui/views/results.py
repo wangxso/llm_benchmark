@@ -195,8 +195,8 @@ def scan_results(results_dir: str) -> List[Dict]:
         except:
             pass
 
-    # Scan for auto-tuning results
-    autotune_files = glob.glob(f"{results_dir}/autotune/tuning_report.json")
+    # Scan for auto-tuning results (in session subdirectories)
+    autotune_files = glob.glob(f"{results_dir}/autotune/**/tuning_report.json", recursive=True)
     autotune_files += glob.glob(f"{results_dir}/**/tuning_report.json", recursive=True)
     for f in autotune_files:
         if f in seen_paths:
@@ -205,9 +205,15 @@ def scan_results(results_dir: str) -> List[Dict]:
             with open(f, "r") as file:
                 data = json.load(file)
                 best = data.get("best_result", {})
+                # Extract session name from parent directory
+                session_dir = Path(f).parent.name
+                # session_dir format: "ModelName_20260429_160300"
+                session_label = session_dir.rsplit("_", 2)[0] if "_" in session_dir else session_dir
+                best_score = data.get("summary", {}).get("best_score")
+                score_str = f" (score={best_score:.2f})" if best_score is not None else ""
                 results.append({
                     "path": f,
-                    "name": f"🔧 Auto-Tuning",
+                    "name": f"🔧 {session_label}{score_str}",
                     "type": "Auto-Tuning",
                     "timestamp": data.get("summary", {}).get("completed_at", ""),
                     "model": best.get("config", {}).get("model", "unknown"),
@@ -262,7 +268,7 @@ def show_result_detail(file_path: str):
             show_eval_detail(data)
         elif "best_result" in data or "summary" in data:
             # Auto-tuning result
-            show_autotune_detail(data)
+            show_autotune_detail(data, file_path=file_path)
         else:
             # Load test result
             show_load_test_detail(data)
@@ -552,9 +558,12 @@ def show_load_test_detail(data: Dict):
             st.metric(name, value)
 
 
-def show_autotune_detail(data: Dict):
+def show_autotune_detail(data: Dict, file_path: str = ""):
     """Show auto-tuning result details with charts"""
     st.markdown("## 🔧 Auto-Tuning Details")
+
+    if file_path:
+        st.caption(f"📁 `{Path(file_path).parent}`")
 
     summary = data.get("summary", {})
     best_result = data.get("best_result", {})

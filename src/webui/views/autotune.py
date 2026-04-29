@@ -28,6 +28,18 @@ from src.device import list_devices, detect_device
 from src.webui.task_manager import start_task, get_active_tasks, get_all_tasks, stop_task
 
 
+def _make_session_dir(base_dir: str, model_path: str) -> str:
+    """Create a unique session directory: {base}/{model_name}_{timestamp}/"""
+    from datetime import datetime
+    model_name = Path(model_path).name or "model"
+    # Sanitize model name
+    model_name = model_name.replace("/", "_").replace("\\", "_")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_dir = Path(base_dir) / f"{model_name}_{timestamp}"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return str(session_dir)
+
+
 def _run_autotune_background(task_id: str, stop_event, **kwargs):
     """Background target for auto-tuning."""
     from src.webui.task_manager import update_progress, complete_task, _fail
@@ -35,6 +47,9 @@ def _run_autotune_background(task_id: str, stop_event, **kwargs):
 
     try:
         update_progress(task_id, 0.0, "Starting auto-tuning...")
+
+        # Create unique session directory
+        session_dir = _make_session_dir(kwargs["output_dir"], kwargs["model_path"])
 
         def progress_callback(progress: TuningProgress):
             pct = progress.completed_trials / progress.total_trials if progress.total_trials > 0 else 0
@@ -52,20 +67,18 @@ def _run_autotune_background(task_id: str, stop_event, **kwargs):
             startup_timeout=kwargs["startup_timeout"],
             seed=kwargs["seed"],
             verbose=True,
-            log_dir=f"{kwargs['output_dir']}/logs",
+            log_dir=f"{session_dir}/logs",
             progress_callback=progress_callback,
         )
 
         result = tuner.run(stop_event=stop_event)
 
-        # Save results
-        output_path = Path(kwargs["output_dir"])
-        output_path.mkdir(parents=True, exist_ok=True)
-        save_tuning_report(tuner.results, output_path / "tuning_report.json")
+        # Save results into session directory
+        save_tuning_report(tuner.results, Path(session_dir) / "tuning_report.json")
         if result and result.error is None:
             generate_deploy_template(
                 result.config,
-                output_path / "best_config.yaml",
+                Path(session_dir) / "best_config.yaml",
                 model_path=kwargs["model_path"],
                 gpu_ids=kwargs["gpu_ids"],
             )
@@ -73,7 +86,7 @@ def _run_autotune_background(task_id: str, stop_event, **kwargs):
         complete_task(task_id, {
             "best": result,
             "results": tuner.results,
-            "output_dir": kwargs["output_dir"],
+            "output_dir": session_dir,
         })
     except Exception as e:
         _fail(task_id, str(e))

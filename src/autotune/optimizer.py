@@ -348,6 +348,16 @@ class AutoTuner:
         return pd.DataFrame(rows)
 
 
+def _make_session_dir(base_dir: str, model_path: str) -> Path:
+    """Create a unique session directory: {base}/{model_name}_{timestamp}/"""
+    model_name = Path(model_path).name or "model"
+    model_name = model_name.replace("/", "_").replace("\\", "_")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_dir = Path(base_dir) / f"{model_name}_{timestamp}"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return session_dir
+
+
 def tune_vllm(
     model_path: str,
     gpu_ids: str,
@@ -363,6 +373,8 @@ def tune_vllm(
     """Convenience function for quick tuning."""
     from .templates import save_tuning_report, generate_deploy_template
 
+    session_dir = _make_session_dir(output_dir, model_path)
+
     tuner = AutoTuner(
         model_path=model_path,
         gpu_ids=gpu_ids,
@@ -371,19 +383,16 @@ def tune_vllm(
         device=device,
         max_trials=max_trials,
         verbose=verbose,
+        log_dir=str(session_dir / "logs"),
     )
 
     result = tuner.run()
 
     if result:
-        # Save results
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        save_tuning_report(tuner.results, output_path / "tuning_report.json")
-        generate_deploy_template(result.config, output_path / "best_config.yaml")
+        save_tuning_report(tuner.results, session_dir / "tuning_report.json")
+        generate_deploy_template(result.config, session_dir / "best_config.yaml")
 
         if verbose:
-            print(f"\nResults saved to {output_path}")
+            print(f"\nResults saved to {session_dir}")
 
     return result
