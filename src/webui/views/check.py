@@ -95,10 +95,12 @@ def render_check_page():
             api_key=selected_provider.api_key,
             timeout=timeout
         )
+        st.session_state["check_results"] = results
 
-        # Display results
+    # Display persisted results
+    if "check_results" in st.session_state and st.session_state["check_results"]:
         st.markdown("---")
-        display_check_results(results)
+        display_check_results(st.session_state["check_results"])
 
 
 def run_capability_check(

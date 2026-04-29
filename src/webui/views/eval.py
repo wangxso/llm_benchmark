@@ -192,6 +192,12 @@ def render_eval_page():
             dataset_source=dataset_source,
         )
 
+    # Display persisted results from previous run
+    if "eval_report" in st.session_state and st.session_state["eval_report"]:
+        st.markdown("---")
+        elapsed = st.session_state.get("eval_elapsed", 0)
+        display_eval_results(st.session_state["eval_report"], elapsed)
+
 
 def run_evaluation(
     benchmark_name: str,
@@ -263,6 +269,8 @@ def run_evaluation(
             progress_bar.progress(1.0)
             status_text.empty()
 
+            st.session_state["eval_report"] = report
+            st.session_state["eval_elapsed"] = elapsed
             display_eval_results(report, elapsed)
 
         except Exception as e:

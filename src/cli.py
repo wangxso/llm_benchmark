@@ -571,6 +571,7 @@ def report(input, output):
 @cli.command("tune")
 @click.option("--model", "-m", required=True, help="Model path or name")
 @click.option("--gpu-ids", required=True, help="GPU IDs to use (e.g., '0' or '0,1,2,3')")
+@click.option("--device", type=click.Choice(["auto", "nvidia", "rocm", "ascend", "cambricon", "biren", "metax", "moorethreads"]), default="auto", help="GPU vendor type")
 @click.option("--strategy", type=click.Choice(["bayesian", "random", "grid"]), default="bayesian", help="Search strategy")
 @click.option("--objective", type=click.Choice(["throughput", "latency", "balanced"]), default="throughput", help="Optimization objective")
 @click.option("--max-trials", default=20, help="Maximum number of trials")
@@ -586,7 +587,7 @@ def tune_cmd(**kwargs):
     by testing different parameter combinations and measuring performance.
 
     Examples:
-        # Basic usage - optimize for throughput
+        # Basic usage - optimize for throughput (NVIDIA)
         bench.py tune --model ./models/Qwen3.5-0.8B --gpu-ids "0"
 
         # Use all 4 GPUs with bayesian optimization
@@ -594,6 +595,9 @@ def tune_cmd(**kwargs):
 
         # Optimize for low latency
         bench.py tune --model ./models/Qwen3.5-0.8B --gpu-ids "0" --objective latency
+
+        # Use with Huawei Ascend NPU
+        bench.py tune --model ./models/Qwen3.5-0.8B --gpu-ids "0" --device ascend
 
     The tuning process will:
     1. Start vLLM with different parameter configurations
@@ -608,9 +612,14 @@ def tune_cmd(**kwargs):
     """
     from .autotune import AutoTuner, save_tuning_report, generate_deploy_template
     from .autotune.config import get_default_vllm_space
+    from .device import detect_device
 
     model_path = kwargs["model"]
     gpu_ids = kwargs["gpu_ids"]
+    device = kwargs["device"]
+    if device == "auto":
+        device = detect_device()
+        click.echo(f"[Info] Auto-detected device: {device}")
     strategy = kwargs["strategy"]
     objective = kwargs["objective"]
     max_trials = kwargs["max_trials"]
@@ -625,6 +634,7 @@ def tune_cmd(**kwargs):
     click.echo("=" * 60)
     click.echo(f"\nModel: {model_path}")
     click.echo(f"GPU IDs: {gpu_ids}")
+    click.echo(f"Device: {device}")
     click.echo(f"Strategy: {strategy}")
     click.echo(f"Objective: {objective}")
     click.echo(f"Max Trials: {max_trials}")
@@ -640,6 +650,7 @@ def tune_cmd(**kwargs):
     tuner = AutoTuner(
         model_path=model_path,
         gpu_ids=gpu_ids,
+        device=device,
         search_space=search_space,
         strategy=strategy,
         objective=objective,

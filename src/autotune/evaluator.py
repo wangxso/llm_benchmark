@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .config import TuningConfig, TuningResult
+from src.device import get_device_profile
 
 
 @dataclass
@@ -35,6 +36,7 @@ class ConfigEvaluator:
         self,
         model_path: str,
         gpu_ids: str,
+        device: str = "nvidia",
         base_port: int = 8100,
         log_dir: str = "./results/autotune/logs",
         startup_timeout: int = 300,
@@ -43,6 +45,7 @@ class ConfigEvaluator:
     ):
         self.model_path = model_path
         self.gpu_ids = gpu_ids
+        self.device = device
         self.base_port = base_port
         self.log_dir = Path(log_dir)
         self.startup_timeout = startup_timeout
@@ -135,7 +138,8 @@ class ConfigEvaluator:
             print(f"  Log: {log_path}")
 
         env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = self.gpu_ids
+        profile = get_device_profile(config.device)
+        env[profile.visible_devices_env] = self.gpu_ids
 
         log_file = open(log_path, "ab")
 
@@ -162,6 +166,8 @@ class ConfigEvaluator:
 
     def _build_command(self, config: TuningConfig, port: int) -> list:
         """Build vLLM command."""
+        profile = get_device_profile(config.device)
+
         command = [
             sys.executable,
             "-m",
@@ -170,10 +176,18 @@ class ConfigEvaluator:
             "--port", str(port),
             "--model", self.model_path,
             "--tensor-parallel-size", str(config.tensor_parallel),
-            "--gpu-memory-utilization", str(config.gpu_memory_utilization),
+        ]
+
+        # Add --gpu-memory-utilization only if supported by the device
+        if profile.supports_gpu_mem_util:
+            command.extend([
+                "--gpu-memory-utilization", str(config.gpu_memory_utilization),
+            ])
+
+        command.extend([
             "--max-model-len", str(config.max_model_len),
             "--max-num-seqs", str(config.max_num_seqs),
-        ]
+        ])
 
         if config.max_num_batched_tokens:
             command.extend([

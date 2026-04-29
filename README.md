@@ -10,6 +10,7 @@
 - **数据集管理**: 支持导入（JSON/JSONL/CSV）和泛化生成两种模式，可指定文本字段如 `instruction`
 - **全链路指标**: QPS、TPS、TTFT、TPOT、P50/P90/P99 时延
 - **vLLM 集成**: 自动采集内部指标（batch size、KV Cache、GPU 利用率）
+- **多厂商 GPU**: 支持 NVIDIA / 华为昇腾 / 寒武纪 / 壁仞 / Metax / 摩尔线程等国产 GPU
 - **WebUI**: Streamlit 可视化界面，支持评测、压测、调参、负载均衡管理
 - **报告生成**: JSON 格式输出，包含瓶颈分析
 
@@ -250,6 +251,9 @@ llm_benchmark/
 │   │   ├── evaluator.py        # 配置评估器
 │   │   ├── optimizer.py        # 主优化器
 │   │   └── templates.py        # 部署模板生成
+│   ├── device/                 # 多厂商 GPU 支持
+│   │   ├── profile.py          # 设备配置 (厂商/环境变量/参数)
+│   │   └── monitor.py          # 跨平台 GPU 利用率采集
 │   ├── webui/                  # WebUI 模块
 │   │   ├── app.py              # Streamlit 主入口
 │   │   └── views/              # 各页面视图
@@ -458,6 +462,7 @@ python bench.py tune --model ./models/Qwen3.5-4B --gpu-ids "0" --strategy random
 |------|------|--------|
 | `--model`, `-m` | 模型路径或名称 | 必填 |
 | `--gpu-ids` | GPU ID 列表 | 必填 |
+| `--device` | GPU 厂商类型 (auto/nvidia/rocm/ascend/cambricon/biren/metax/moorethreads) | auto |
 | `--strategy` | 搜索策略 (bayesian/random/grid) | bayesian |
 | `--objective` | 优化目标 (throughput/latency/balanced) | throughput |
 | `--max-trials` | 最大尝试次数 | 20 |
@@ -518,6 +523,81 @@ best_result = tuner.run()
 # 查看最优配置
 print(f"Best TPS: {best_result.tps:.2f}")
 print(f"Best config: {best_result.config}")
+```
+
+## 多厂商 GPU 支持
+
+支持在多种 GPU 厂商平台上运行压测和自动调参：
+
+| 厂商 | 标识 | 设备环境变量 | GPU 监控 | `--gpu-memory-utilization` |
+|------|------|------------|---------|---------------------------|
+| NVIDIA | `nvidia` | `CUDA_VISIBLE_DEVICES` | pynvml | 支持 |
+| AMD ROCm | `rocm` | `HIP_VISIBLE_DEVICES` | rocm-smi | 支持 |
+| 华为昇腾 | `ascend` | `ASCEND_RT_VISIBLE_DEVICES` | npu-smi | 不支持 |
+| 寒武纪 | `cambricon` | `MLU_VISIBLE_DEVICES` | cnmon | 不支持 |
+| 壁仞 | `biren` | `BR_VISIBLE_DEVICES` | biren-smi | 不支持 |
+| Metax | `metax` | `METAX_VISIBLE_DEVICES` | metax-smi | 不支持 |
+| 摩尔线程 | `moorethreads` | `MT_VISIBLE_DEVICES` | mthreads-gmi | 不支持 |
+
+### 命令行使用
+
+```bash
+# 自动检测 GPU 类型（默认）
+python bench.py tune --model ./models/Qwen3.5-4B --gpu-ids "0" --device auto
+
+# 手动指定华为昇腾
+python bench.py tune --model ./models/Qwen3.5-4B --gpu-ids "0,1" --device ascend
+
+# 寒武纪 MLU
+python bench.py tune --model ./models/Qwen3.5-4B --gpu-ids "0" --device cambricon
+
+# 壁仞 GPU
+python bench.py tune --model ./models/Qwen3.5-4B --gpu-ids "0" --device biren
+```
+
+### 负载均衡配置
+
+在 `lb/config/default.yaml` 中指定设备类型：
+
+```yaml
+instances:
+  - id: "npu0"
+    device: ascend           # 指定设备类型
+    model: "Qwen/Qwen2.5-7B-Instruct"
+    gpu_ids: "0"
+    # device 为 ascend/cambricon/biren 等时，无需 gpu_memory_utilization
+    max_model_len: 4096
+```
+
+### 自动检测逻辑
+
+`--device auto` 按以下优先级自动检测：
+
+1. pynvml 初始化成功 → `nvidia`
+2. `rocm-smi` 可用 → `rocm`
+3. `npu-smi` 可用 → `ascend`
+4. `cnmon` 可用 → `cambricon`
+5. `biren-smi` / `brsmi` 可用 → `biren`
+6. `metax-smi` 可用 → `metax`
+7. `mthreads-gmi` 可用 → `moorethreads`
+8. 默认 → `nvidia`
+
+### Python API
+
+```python
+from src.device import detect_device, get_device_profile, get_gpu_utilization
+
+# 自动检测
+device = detect_device()
+print(f"Detected: {device}")
+
+# 获取设备配置
+profile = get_device_profile("ascend")
+print(f"Env var: {profile.visible_devices_env}")
+print(f"Supports gpu_memory_utilization: {profile.supports_gpu_mem_util}")
+
+# 跨平台 GPU 利用率采集
+util = get_gpu_utilization()
 ```
 
 ## WebUI

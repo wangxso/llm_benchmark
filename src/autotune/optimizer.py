@@ -57,6 +57,7 @@ class AutoTuner:
         search_space: Optional[SearchSpace] = None,
         strategy: str = "bayesian",
         objective: str = "throughput",
+        device: str = "nvidia",
         base_port: int = 8100,
         max_trials: int = 20,
         startup_timeout: int = 300,
@@ -67,6 +68,7 @@ class AutoTuner:
     ):
         self.model_path = model_path
         self.gpu_ids = gpu_ids
+        self.device = device
         self.search_space = search_space or get_default_vllm_space(
             gpu_count=len(gpu_ids.split(","))
         )
@@ -87,6 +89,7 @@ class AutoTuner:
         self.evaluator = ConfigEvaluator(
             model_path=model_path,
             gpu_ids=gpu_ids,
+            device=device,
             base_port=base_port,
             log_dir=log_dir,
             startup_timeout=startup_timeout,
@@ -112,6 +115,7 @@ class AutoTuner:
             print("=" * 60)
             print(f"Model: {self.model_path}")
             print(f"GPU IDs: {self.gpu_ids}")
+            print(f"Device: {self.device}")
             print(f"Strategy: {self.strategy_name}")
             print(f"Objective: {self.objective.value}")
             print(f"Max Trials: {self.max_trials}")
@@ -192,6 +196,7 @@ class AutoTuner:
 
         try:
             config = self.search_strategy.suggest_config(trial, self.search_space)
+            config.device = self.device  # Set device from AutoTuner
             result = await self.evaluator.evaluate(
                 config, trial_id, self.objective.value
             )
@@ -226,6 +231,7 @@ class AutoTuner:
         """Evaluate a single trial for manual search strategies."""
         trial = {"trial_id": trial_id + 1}
         config = self.search_strategy.suggest_config(trial, self.search_space)
+        config.device = self.device  # Set device from AutoTuner
         result = await self.evaluator.evaluate(
             config, trial_id + 1, self.objective.value
         )
@@ -330,6 +336,7 @@ def tune_vllm(
     gpu_ids: str,
     strategy: str = "bayesian",
     objective: str = "throughput",
+    device: str = "nvidia",
     max_trials: int = 20,
     concurrency: int = 100,
     duration: int = 60,
@@ -344,6 +351,7 @@ def tune_vllm(
         gpu_ids=gpu_ids,
         strategy=strategy,
         objective=objective,
+        device=device,
         max_trials=max_trials,
         verbose=verbose,
     )

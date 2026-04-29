@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from .models import InstanceConfig, InstanceState
+from src.device import get_device_profile
 
 
 class ProcessManager:
@@ -45,7 +46,8 @@ class ProcessManager:
         log_handle = log_path.open("ab")
         env = os.environ.copy()
         if state.config.gpu_ids is not None:
-            env["CUDA_VISIBLE_DEVICES"] = str(state.config.gpu_ids)
+            profile = get_device_profile(state.config.device)
+            env[profile.visible_devices_env] = str(state.config.gpu_ids)
 
         # 输出到日志文件和控制台
         process = await asyncio.create_subprocess_exec(
@@ -194,11 +196,19 @@ class ProcessManager:
             config.model,
             "--tensor-parallel-size",
             str(config.tensor_parallel),
-            "--gpu-memory-utilization",
-            str(config.gpu_memory_utilization),
+        ]
+
+        profile = get_device_profile(config.device)
+        if profile.supports_gpu_mem_util:
+            command.extend([
+                "--gpu-memory-utilization",
+                str(config.gpu_memory_utilization),
+            ])
+
+        command.extend([
             "--max-model-len",
             str(config.max_model_len),
-        ]
+        ])
         # MFU metrics 需要 vLLM >= 0.18.0，默认不启用
         # 如需启用，请在 extra_args 中添加 "--enable-mfu-metrics"
         # if config.enable_mfu_metrics:

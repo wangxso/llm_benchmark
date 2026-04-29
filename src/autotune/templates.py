@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Any
 import yaml
 
 from .config import TuningConfig, TuningResult
+from src.device import get_device_profile
 
 
 def generate_deploy_template(
@@ -18,24 +19,31 @@ def generate_deploy_template(
     gpu_ids: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Generate deployment template from the best configuration."""
+    profile = get_device_profile(config.device)
+
+    vllm_config = {
+        "model": model_path or "<MODEL_PATH>",
+        "tensor_parallel_size": config.tensor_parallel,
+        "max_model_len": config.max_model_len,
+        "max_num_seqs": config.max_num_seqs,
+    }
+
+    # Only add gpu_memory_utilization if supported by device
+    if profile.supports_gpu_mem_util:
+        vllm_config["gpu_memory_utilization"] = config.gpu_memory_utilization
 
     template = {
-        "vllm": {
-            "model": model_path or "<MODEL_PATH>",
-            "tensor_parallel_size": config.tensor_parallel,
-            "gpu_memory_utilization": config.gpu_memory_utilization,
-            "max_model_len": config.max_model_len,
-            "max_num_seqs": config.max_num_seqs,
-        },
+        "vllm": vllm_config,
         "performance": {
             "optimized_for": "throughput",
             "expected_tps": "<MEASURED_TPS>",
             "expected_latency_p99_ms": "<MEASURED_P99>",
         },
         "deployment": {
+            "device": config.device,
             "gpu_ids": gpu_ids or "<GPU_IDS>",
             "environment": {
-                "CUDA_VISIBLE_DEVICES": gpu_ids or "<GPU_IDS>",
+                profile.visible_devices_env: gpu_ids or "<GPU_IDS>",
             },
         },
         "metadata": {
@@ -63,14 +71,22 @@ def generate_deploy_template(
 
 def _generate_vllm_command(config: TuningConfig, model_path: Optional[str] = None) -> str:
     """Generate vLLM launch command string."""
+    profile = get_device_profile(config.device)
+
     parts = [
         "python -m vllm.entrypoints.openai.api_server",
         f"--model {model_path or '<MODEL_PATH>'}",
         f"--tensor-parallel-size {config.tensor_parallel}",
-        f"--gpu-memory-utilization {config.gpu_memory_utilization}",
+    ]
+
+    # Only add --gpu-memory-utilization if supported by device
+    if profile.supports_gpu_mem_util:
+        parts.append(f"--gpu-memory-utilization {config.gpu_memory_utilization}")
+
+    parts.extend([
         f"--max-model-len {config.max_model_len}",
         f"--max-num-seqs {config.max_num_seqs}",
-    ]
+    ])
 
     if config.max_num_batched_tokens:
         parts.append(f"--max-num-batched-tokens {config.max_num_batched_tokens}")
@@ -90,8 +106,29 @@ def generate_lb_config(
     lb_port: int = 9000,
 ) -> Dict[str, Any]:
     """Generate Load Balancer configuration from the best config."""
+    profile = get_device_profile(config.device)
 
     gpu_list = gpu_ids.split(",") if gpu_ids else []
+
+    instance_config = {
+        "id": "vllm-optimized",
+        "enabled": True,
+        "managed": True,
+        "host": "127.0.0.1",
+        "port": port,
+        "model": model_path or "<MODEL_PATH>",
+        "device": config.device,
+        "tensor_parallel": config.tensor_parallel,
+        "gpu_ids": gpu_ids,
+        "max_model_len": config.max_model_len,
+        "extra_args": [
+            f"--max-num-seqs={config.max_num_seqs}",
+        ],
+    }
+
+    # Only add gpu_memory_utilization if supported by device
+    if profile.supports_gpu_mem_util:
+        instance_config["gpu_memory_utilization"] = config.gpu_memory_utilization
 
     lb_config = {
         "server": {
@@ -103,23 +140,7 @@ def generate_lb_config(
             "strategy": "least_load",
             "refresh_interval": 2,
         },
-        "instances": [
-            {
-                "id": "vllm-optimized",
-                "enabled": True,
-                "managed": True,
-                "host": "127.0.0.1",
-                "port": port,
-                "model": model_path or "<MODEL_PATH>",
-                "tensor_parallel": config.tensor_parallel,
-                "gpu_ids": gpu_ids,
-                "gpu_memory_utilization": config.gpu_memory_utilization,
-                "max_model_len": config.max_model_len,
-                "extra_args": [
-                    f"--max-num-seqs={config.max_num_seqs}",
-                ],
-            }
-        ],
+        "instances": [instance_config],
     }
 
     if config.max_num_batched_tokens:
@@ -194,6 +215,7 @@ def save_history_csv(results: List[TuningResult], output_path: Path):
         "trial_id",
         "score",
         "error",
+        "device",
         "gpu_memory_utilization",
         "tensor_parallel",
         "max_model_len",
@@ -222,6 +244,7 @@ def save_history_csv(results: List[TuningResult], output_path: Path):
                 "trial_id": r.trial_id,
                 "score": r.score,
                 "error": r.error or "",
+                "device": r.config.device,
                 "gpu_memory_utilization": r.config.gpu_memory_utilization,
                 "tensor_parallel": r.config.tensor_parallel,
                 "max_model_len": r.config.max_model_len,

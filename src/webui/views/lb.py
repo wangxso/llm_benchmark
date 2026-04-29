@@ -155,6 +155,11 @@ def render_lb_page():
             dataset_mode=dataset_mode,
         )
 
+    # Display persisted results from previous run
+    if "lb_report" in st.session_state and st.session_state["lb_report"]:
+        st.markdown("---")
+        display_load_test_results(st.session_state["lb_report"])
+
 
 def run_load_test(
     api_base_url: str,
@@ -252,7 +257,8 @@ def run_load_test(
             status.empty()
             progress_bar.empty()
 
-            # Display results
+            # Persist and display results
+            st.session_state["lb_report"] = report
             display_load_test_results(report)
 
         except Exception as e:

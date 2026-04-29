@@ -83,6 +83,9 @@ class SearchSpace:
 @dataclass
 class TuningConfig:
     """Configuration for a single tuning trial."""
+    # Device type
+    device: str = "nvidia"
+
     # vLLM parameters
     gpu_memory_utilization: float = 0.85
     tensor_parallel: int = 1
@@ -101,12 +104,18 @@ class TuningConfig:
 
     def to_vllm_args(self) -> Dict[str, Any]:
         """Convert to vLLM command line arguments."""
+        from src.device import get_device_profile
+
         args = {
-            "gpu_memory_utilization": self.gpu_memory_utilization,
             "tensor_parallel_size": self.tensor_parallel,
             "max_model_len": self.max_model_len,
             "max_num_seqs": self.max_num_seqs,
         }
+
+        profile = get_device_profile(self.device)
+        if profile.supports_gpu_mem_util:
+            args["gpu_memory_utilization"] = self.gpu_memory_utilization
+
         if self.max_num_batched_tokens:
             args["max_num_batched_tokens"] = self.max_num_batched_tokens
         if self.enforce_eager:
@@ -116,6 +125,7 @@ class TuningConfig:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
+            "device": self.device,
             "gpu_memory_utilization": self.gpu_memory_utilization,
             "tensor_parallel": self.tensor_parallel,
             "max_model_len": self.max_model_len,

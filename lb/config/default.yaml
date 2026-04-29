@@ -20,6 +20,7 @@ instances:
     model: "Qwen/Qwen2.5-0.5B-Instruct"
     tensor_parallel: 1
     gpu_ids: "0"
+    device: nvidia
     gpu_memory_utilization: 0.4
     max_model_len: 4096
     enable_mfu_metrics: true
@@ -33,6 +34,7 @@ instances:
     model: "Qwen/Qwen2.5-0.5B-Instruct"
     tensor_parallel: 1
     gpu_ids: "0"
+    device: nvidia
     gpu_memory_utilization: 0.4
     max_model_len: 4096
     enable_mfu_metrics: true

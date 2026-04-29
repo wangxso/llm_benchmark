@@ -9,6 +9,7 @@ import yaml
 from src.config import deep_merge
 
 from .models import InstanceConfig
+from src.device import get_device_profile
 
 
 INSTANCE_DEFAULTS = {
@@ -17,6 +18,7 @@ INSTANCE_DEFAULTS = {
     "host": "127.0.0.1",
     "tensor_parallel": 1,
     "gpu_ids": None,
+    "device": "nvidia",
     "gpu_memory_utilization": 0.85,
     "max_model_len": 4096,
     "enable_mfu_metrics": True,
@@ -163,10 +165,13 @@ def validate_config(config: Dict[str, Any]) -> bool:
             raise ValueError(f"Instance {instance_id} has invalid tensor_parallel")
 
         gpu_memory = item.get("gpu_memory_utilization")
-        if not isinstance(gpu_memory, (int, float)) or not 0 < gpu_memory <= 1:
-            raise ValueError(
-                f"Instance {instance_id} has invalid gpu_memory_utilization"
-            )
+        device = item.get("device", "nvidia")
+        profile = get_device_profile(device)
+        if profile.supports_gpu_mem_util:
+            if not isinstance(gpu_memory, (int, float)) or not 0 < gpu_memory <= 1:
+                raise ValueError(
+                    f"Instance {instance_id} has invalid gpu_memory_utilization"
+                )
 
         max_model_len = item.get("max_model_len")
         if not isinstance(max_model_len, int) or max_model_len <= 0:

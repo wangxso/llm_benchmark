@@ -26,6 +26,7 @@ from src.autotune import (
 )
 from src.autotune.config import get_default_vllm_space, get_high_throughput_space, get_low_latency_space
 from src.autotune.search import create_search_strategy
+from src.device import list_devices, detect_device
 
 
 def render_autotune_page():
@@ -81,6 +82,19 @@ def render_config_section():
         )
 
     with col2:
+        # Device type selector
+        device_options = {"auto": "Auto (detect)", **list_devices()}
+        device_names = list(device_options.keys())
+
+        device = st.selectbox(
+            "GPU Vendor",
+            options=device_names,
+            format_func=lambda x: device_options.get(x, x),
+            index=0,  # "auto" is first
+            help="Select GPU vendor type. 'Auto' will detect automatically.",
+            key="autotune_device"
+        )
+
         # Optimization settings
         objective = st.selectbox(
             "Optimization Objective",
@@ -338,6 +352,9 @@ def run_autotuning():
     # Get configuration
     model_path = st.session_state.get("autotune_model_path", "")
     gpu_ids = st.session_state.get("autotune_gpu_ids", "0")
+    device = st.session_state.get("autotune_device", "nvidia")
+    if device == "auto":
+        device = detect_device()
     objective = st.session_state.get("autotune_objective", "throughput")
     strategy = st.session_state.get("autotune_strategy", "bayesian")
     max_trials = st.session_state.get("autotune_max_trials", 10)
@@ -377,6 +394,7 @@ def run_autotuning():
     tuner = AutoTuner(
         model_path=model_path,
         gpu_ids=gpu_ids,
+        device=device,
         search_space=search_space,
         strategy=strategy,
         objective=objective,
@@ -521,6 +539,7 @@ def display_best_result(result: TuningResult):
         param_md = f"""
 | Parameter | Value |
 |-----------|-------|
+| Device | {config.device} |
 | GPU Memory Utilization | {config.gpu_memory_utilization} |
 | Tensor Parallel | {config.tensor_parallel} |
 | Max Model Length | {config.max_model_len} |
