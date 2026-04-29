@@ -3,6 +3,7 @@
 import asyncio
 import os
 import signal
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -122,8 +123,12 @@ class ConfigEvaluator:
         # Ensure previous instance is fully stopped before starting new one
         if self._current_instance is not None:
             await self._stop_instance()
-            # Wait a moment for port to be released
-            await asyncio.sleep(2)
+            # Wait a moment for port to be released and GPU memory to free
+            await asyncio.sleep(3)
+        else:
+            # Kill any orphan vLLM processes from prior crashed trials
+            self._kill_orphan_vllm(port)
+            await asyncio.sleep(1)
 
         command = self._build_command(config, port)
 
@@ -200,12 +205,38 @@ class ConfigEvaluator:
 
         return command
 
+    def _read_log_error(self, log_path: str) -> str:
+        """Read log file to extract the root cause error message."""
+        try:
+            with open(log_path, "r") as f:
+                content = f.read()
+            # Look for common fatal errors
+            for pattern in [
+                "ValueError:",
+                "RuntimeError:",
+                "No available memory for the cache blocks",
+                "OutOfMemoryError",
+                "CUDA out of memory",
+            ]:
+                idx = content.rfind(pattern)
+                if idx >= 0:
+                    # Extract the line containing the error
+                    line_start = content.rfind("\n", 0, idx) + 1
+                    line_end = content.find("\n", idx)
+                    if line_end < 0:
+                        line_end = len(content)
+                    return content[line_start:line_end].strip()
+        except Exception:
+            pass
+        return ""
+
     async def _wait_for_health(self, instance: InstanceHandle, max_retries: int = 150):
         """Wait for vLLM instance to become healthy."""
         import aiohttp
 
         url = f"{instance.base_url}/health"
         start_time = time.time()
+        log_checked = False
 
         while time.time() - start_time < self.startup_timeout:
             try:
@@ -221,9 +252,36 @@ class ConfigEvaluator:
 
             # Check if process died
             if instance.process.returncode is not None:
+                log_error = self._read_log_error(instance.log_path)
+                if log_error:
+                    raise RuntimeError(
+                        f"vLLM startup failed (exit {instance.process.returncode}): {log_error}"
+                    )
                 raise RuntimeError(
                     f"vLLM process exited with code {instance.process.returncode}"
                 )
+
+            # After 15s, check log for fatal errors that may cause a hang
+            # (vLLM logs the error but may not exit immediately)
+            if not log_checked and (time.time() - start_time > 15):
+                log_checked = True
+                try:
+                    with open(instance.log_path, "r") as f:
+                        content = f.read()
+                    for fatal_msg in [
+                        "No available memory for the cache blocks",
+                        "CUDA out of memory",
+                        "EngineCore failed to start",
+                    ]:
+                        if fatal_msg in content:
+                            instance.process.kill()
+                            await instance.process.wait()
+                            log_error = self._read_log_error(instance.log_path)
+                            raise RuntimeError(
+                                f"vLLM startup failed: {log_error or fatal_msg}"
+                            )
+                except (IOError, OSError):
+                    pass
 
             await asyncio.sleep(self.health_check_interval)
 
@@ -315,6 +373,48 @@ class ConfigEvaluator:
 
         return results
 
+    def _kill_orphan_vllm(self, port: int):
+        """Kill any orphan vLLM processes on the given port or GPU."""
+        killed = 0
+        try:
+            # Find vLLM processes listening on the port
+            result = subprocess.run(
+                ["lsof", "-ti", f":{port}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for pid_str in result.stdout.strip().split("\n"):
+                pid_str = pid_str.strip()
+                if pid_str and pid_str.isdigit():
+                    pid = int(pid_str)
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                        killed += 1
+                    except (ProcessLookupError, PermissionError):
+                        pass
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+        # Also kill any lingering vllm processes targeting our GPU IDs
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", f"CUDA_VISIBLE_DEVICES={self.gpu_ids}.*vllm"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for pid_str in result.stdout.strip().split("\n"):
+                pid_str = pid_str.strip()
+                if pid_str and pid_str.isdigit():
+                    pid = int(pid_str)
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                        killed += 1
+                    except (ProcessLookupError, PermissionError):
+                        pass
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+        if killed > 0 and self.verbose:
+            print(f"[ConfigEvaluator] Killed {killed} orphan vLLM process(es)")
+
     async def _stop_instance(self):
         """Stop the current vLLM instance."""
         if self._current_instance is None:
@@ -336,6 +436,9 @@ class ConfigEvaluator:
                 await process.wait()
 
         self._current_instance = None
+
+        # Also kill any orphan processes
+        self._kill_orphan_vllm(instance.port)
 
         if self.verbose:
             print(f"[ConfigEvaluator] Instance stopped")
