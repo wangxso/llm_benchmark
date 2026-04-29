@@ -11,7 +11,8 @@
 - **全链路指标**: QPS、TPS、TTFT、TPOT、P50/P90/P99 时延
 - **vLLM 集成**: 自动采集内部指标（batch size、KV Cache、GPU 利用率）
 - **多厂商 GPU**: 支持 NVIDIA / 华为昇腾 / 寒武纪 / 壁仞 / Metax / 摩尔线程等国产 GPU
-- **WebUI**: Streamlit 可视化界面，支持评测、压测、调参、负载均衡管理
+- **GPU 实时监控**: WebUI GPU Monitor 页面，逐卡展示利用率、显存、温度、功耗、进程（NVIDIA CUDA 优先）
+- **WebUI**: Streamlit 可视化界面，支持评测、压测、调参、负载均衡管理、GPU 监控，切换标签页结果不丢失
 - **报告生成**: JSON 格式输出，包含瓶颈分析
 
 ## 安装
@@ -253,7 +254,7 @@ llm_benchmark/
 │   │   └── templates.py        # 部署模板生成
 │   ├── device/                 # 多厂商 GPU 支持
 │   │   ├── profile.py          # 设备配置 (厂商/环境变量/参数)
-│   │   └── monitor.py          # 跨平台 GPU 利用率采集
+│   │   └── monitor.py          # 跨平台 GPU 利用率/详情/进程采集
 │   ├── webui/                  # WebUI 模块
 │   │   ├── app.py              # Streamlit 主入口
 │   │   └── views/              # 各页面视图
@@ -585,7 +586,7 @@ instances:
 ### Python API
 
 ```python
-from src.device import detect_device, get_device_profile, get_gpu_utilization
+from src.device import detect_device, get_device_profile, get_gpu_utilization, get_gpu_details, get_gpu_processes
 
 # 自动检测
 device = detect_device()
@@ -598,6 +599,16 @@ print(f"Supports gpu_memory_utilization: {profile.supports_gpu_mem_util}")
 
 # 跨平台 GPU 利用率采集
 util = get_gpu_utilization()
+
+# 逐卡详细信息（NVIDIA 支持最完整：名称/UUID/利用率/显存/温度/功耗/风扇）
+gpus = get_gpu_details()
+for g in gpus:
+    print(f"GPU {g.index}: {g.name} | {g.gpu_util:.0f}% | {g.mem_used_mb:.0f}/{g.mem_total_mb:.0f}MB | {g.temperature_c:.0f}°C | {g.power_draw_w:.0f}W")
+
+# 查看 GPU 上运行的进程（仅 NVIDIA）
+procs = get_gpu_processes()
+for p in procs:
+    print(f"GPU {p.gpu_index}: PID {p.pid} ({p.process_name}) - {p.used_memory_mb:.0f}MB")
 ```
 
 ## WebUI
@@ -608,12 +619,24 @@ util = get_gpu_utilization()
 streamlit run src/webui/app.py
 ```
 
+### GPU Monitor
+
+实时监控每张 GPU 卡的状态，NVIDIA CUDA 优先支持完整指标：
+
+- GPU / 显存利用率进度条（颜色编码：<60% 绿 / <85% 黄 / >=85% 红）
+- 显存使用量（已用/总量 MB）
+- 温度、功耗、风扇转速
+- GPU 上运行的进程列表（PID、进程名、显存占用）
+- 自动刷新（可调 1-10 秒间隔）
+- 支持多厂商自动检测
+
 功能模块：
 - **Model Check**: 快速检测模型是否正常工作
 - **Evaluation**: 运行基准评测
 - **Load Testing**: 配置并运行压测
 - **Auto-Tuning**: vLLM 参数自动调优
 - **Load Balancer**: 管理 vLLM 实例
+- **GPU Monitor**: 实时 GPU 卡级监控（利用率/显存/温度/功耗/进程）
 - **Results**: 查看历史结果
 
 ## License
