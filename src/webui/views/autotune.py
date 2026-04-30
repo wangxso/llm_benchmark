@@ -1,6 +1,7 @@
 """Auto-Tuning page for vLLM parameter optimization."""
 
 import streamlit as st
+import glob
 import json
 import time
 import sys
@@ -26,6 +27,41 @@ from src.autotune.config import get_default_vllm_space, get_high_throughput_spac
 from src.autotune.search import create_search_strategy
 from src.device import list_devices, detect_device
 from src.webui.task_manager import start_task, get_active_tasks, get_all_tasks, stop_task
+
+
+def _load_autotune_sessions(base_dir: str = "./results/autotune") -> List[Dict]:
+    """Load all autotune session results from disk."""
+    sessions = []
+    seen = set()
+    for f in sorted(glob.glob(f"{base_dir}/**/tuning_report.json", recursive=True)):
+        if f in seen:
+            continue
+        try:
+            with open(f) as fh:
+                data = json.load(fh)
+            session_dir = Path(f).parent
+            session_name = session_dir.name
+            best = data.get("best_result", {})
+            best_config = best.get("config", {})
+            sessions.append({
+                "path": f,
+                "session_dir": str(session_dir),
+                "session_name": session_name,
+                "summary": data.get("summary", {}),
+                "best_result": best,
+                "history": data.get("history", []),
+                "model": best_config.get("model", ""),
+                "best_score": data.get("summary", {}).get("best_score"),
+                "total_trials": data.get("summary", {}).get("total_trials", 0),
+                "successful_trials": data.get("summary", {}).get("successful_trials", 0),
+                "completed_at": data.get("summary", {}).get("completed_at", ""),
+            })
+            seen.add(f)
+        except Exception:
+            pass
+    # Sort by completed_at descending
+    sessions.sort(key=lambda x: x.get("completed_at", ""), reverse=True)
+    return sessions
 
 
 def _make_session_dir(base_dir: str, model_path: str) -> str:
@@ -126,6 +162,9 @@ def render_autotune_page():
             if task.result.get("best"):
                 st.session_state["autotune_best"] = task.result["best"]
 
+    # Load all sessions from disk (persistent across restarts)
+    all_sessions = _load_autotune_sessions()
+
     # Tabs for different sections
     tab1, tab2, tab3 = st.tabs(["⚙️ Configuration", "🎯 Run Tuning", "📊 Results"])
 
@@ -136,7 +175,7 @@ def render_autotune_page():
         render_run_section()
 
     with tab3:
-        render_results_section()
+        render_results_section(all_sessions)
 
 
 def render_config_section():
@@ -579,35 +618,83 @@ def display_best_result(result: TuningResult):
         st.markdown(metric_md)
 
 
-def render_results_section():
-    """Render results section - show history and export options."""
-    st.subheader("Tuning History")
+def render_results_section(all_sessions: List[Dict] = None):
+    """Render results section - show history from disk and current session."""
+    st.subheader("Tuning Sessions")
 
-    results = st.session_state.get("autotune_results", [])
+    # Show current in-memory results first (if any)
+    current_results = st.session_state.get("autotune_results", [])
+    current_best = st.session_state.get("autotune_best")
 
-    if not results:
-        st.info("No tuning results yet. Run a tuning session first.")
+    if current_results:
+        st.markdown("**Current Session**")
+        display_results_table(current_results)
+        if current_best:
+            display_best_result(current_best)
+        st.divider()
+
+    # Show all sessions from disk
+    sessions = all_sessions or _load_autotune_sessions()
+
+    if not sessions:
+        st.info("No tuning sessions found. Run a tuning session first.")
         return
 
-    # Display results table
-    display_results_table(results)
+    st.markdown(f"**{len(sessions)} session(s) on disk**")
 
-    # Export options
-    st.subheader("Export Results")
+    for session in sessions:
+        score = session.get("best_score")
+        score_str = f" | Score: {score:.2f}" if score is not None else ""
+        trials_str = f" | {session['successful_trials']}/{session['total_trials']} trials"
+        time_str = f" | {session.get('completed_at', '')[:16]}"
 
-    col1, col2, col3 = st.columns(3)
+        with st.expander(
+            f"🔧 {session['session_name']}{score_str}{trials_str}{time_str}",
+            expanded=False,
+        ):
+            # Session info
+            st.caption(f"📁 `{session['session_dir']}`")
 
-    with col1:
-        if st.button("📥 Download JSON Report", width="stretch"):
-            download_json_report(results)
+            # Best config from this session
+            best = session.get("best_result", {})
+            if best:
+                best_config = best.get("config", {})
+                best_metrics = best.get("metrics", {})
 
-    with col2:
-        if st.button("📥 Download Best Config", width="stretch"):
-            download_best_config()
+                col1, col2 = st.columns(2)
+                with col1:
+                    cfg_md = "| Parameter | Value |\n|-----------|-------|\n"
+                    for k, v in best_config.items():
+                        if k not in ("device",):
+                            cfg_md += f"| {k} | {v} |\n"
+                    st.markdown(cfg_md)
 
-    with col3:
-        if st.button("📥 Download CSV History", width="stretch"):
-            download_csv_history(results)
+                with col2:
+                    met_md = "| Metric | Value |\n|--------|-------|\n"
+                    met_md += f"| TPS | {best_metrics.get('tps', 0):.2f} tok/s |\n"
+                    met_md += f"| QPS | {best_metrics.get('qps', 0):.2f} req/s |\n"
+                    met_md += f"| Latency P99 | {best_metrics.get('latency_p99', 0):.1f} ms |\n"
+                    met_md += f"| Success Rate | {best_metrics.get('success_rate', 0) * 100:.1f}% |\n"
+                    st.markdown(met_md)
+
+            # Show history table
+            history = session.get("history", [])
+            if history:
+                st.markdown("**All Trials**")
+                table_data = []
+                for h in history:
+                    cfg = h.get("config", {})
+                    met = h.get("metrics", {})
+                    table_data.append({
+                        "Trial": h.get("trial_id", 0),
+                        "Score": f"{h.get('score', 0):.2f}",
+                        "TPS": f"{met.get('tps', 0):.1f}",
+                        "P99 (ms)": f"{met.get('latency_p99', 0):.1f}",
+                        "GPU Mem": cfg.get("gpu_memory_utilization", ""),
+                        "Max Len": cfg.get("max_model_len", ""),
+                        "Status": "✓" if h.get("error") is None else "✗",
+                    })
+                st.dataframe(table_data, width="stretch", hide_index=True)
 
 
 def display_results_table(results: List[TuningResult]):
