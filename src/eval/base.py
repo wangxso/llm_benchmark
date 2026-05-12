@@ -80,7 +80,6 @@ class BaseBenchmark(ABC):
             load_kwargs = {
                 "path": dataset_path,
                 "split": split,
-                "trust_remote_code": True,
             }
             if self.hf_name:
                 load_kwargs["name"] = self.hf_name

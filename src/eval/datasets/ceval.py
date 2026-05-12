@@ -126,7 +126,6 @@ class CEvalBenchmark(BaseBenchmark):
                     "path": dataset_path,
                     "name": subj,
                     "split": split,
-                    "trust_remote_code": True,
                 }
                 if token and source != "modelscope":
                     load_kwargs["token"] = token
@@ -151,7 +150,6 @@ class CEvalBenchmark(BaseBenchmark):
                             "path": self.hf_path,
                             "name": subj,
                             "split": split,
-                            "trust_remote_code": True,
                         }
                         if token:
                             fallback_kwargs["token"] = token

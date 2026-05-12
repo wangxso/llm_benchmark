@@ -35,6 +35,8 @@ def cli():
 @click.option("--output", "-o", type=str, default="./results", help="Output directory")
 @click.option("--list", "list_benchmarks", is_flag=True, help="List available benchmarks")
 @click.option("--hf-token", type=str, help="HuggingFace token for gated datasets")
+@click.option("--source", type=click.Choice(["huggingface", "modelscope"]), default="huggingface",
+              help="Dataset source: huggingface (default) or modelscope (for restricted networks)")
 @click.option("--api-base-url", type=str, help="Remote API base URL (e.g., https://api.openai.com/v1)")
 @click.option("--api-key", type=str, help="API key for remote API")
 @click.option("--api-type", type=click.Choice(["openai", "anthropic"]), default="openai",
@@ -89,6 +91,7 @@ def eval_cmd(**kwargs):
 
     click.echo(f"[Eval] Starting evaluation: {benchmark.name}")
     click.echo(f"[Eval] Model: {kwargs.get('model', 'auto-detect')}")
+    click.echo(f"[Eval] Dataset source: {kwargs.get('source', 'huggingface')}")
     click.echo(f"[Eval] Prompt style: {kwargs['prompt_style']}")
     if kwargs.get("api_base_url"):
         click.echo(f"[Eval] API URL: {kwargs['api_base_url']}")
@@ -113,6 +116,7 @@ def eval_cmd(**kwargs):
         api_base_url=kwargs.get("api_base_url"),
         api_key=kwargs.get("api_key"),
         api_type=kwargs.get("api_type", "openai"),
+        dataset_source=kwargs.get("source", "huggingface"),
     )
 
     report = runner.run(
