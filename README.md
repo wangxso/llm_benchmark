@@ -71,15 +71,19 @@ python bench.py eval --benchmark mmlu-pro --vllm-host localhost --subject math
 
 # 使用 Chain-of-Thought 提示
 python bench.py eval --benchmark gpqa --vllm-host localhost --prompt-style cot
+
+# 使用 ModelScope 加载数据集（适用于无法访问 HuggingFace 的网络环境）
+python bench.py eval --benchmark gpqa --vllm-host localhost --source modelscope
+python bench.py eval --benchmark ceval --vllm-host localhost --source modelscope
 ```
 
-| 评测集 | 说明 |
-|--------|------|
-| GPQA | 研究生级别问答（需 HF 登录） |
-| MMLU-Pro | MMLU 增强版，10 选项 |
-| MMLU-Redux | MMLU 纠错版 |
-| SuperGPQA | 综合研究生级别评测 |
-| C-Eval | 中文综合能力评测，52 学科 |
+| 评测集 | 说明 | ModelScope 路径 |
+|--------|------|----------------|
+| GPQA | 研究生级别问答（需 HF 登录） | iic/GPQA |
+| MMLU-Pro | MMLU 增强版，10 选项 | iic/MMLU-Pro |
+| MMLU-Redux | MMLU 纠错版 | - |
+| SuperGPQA | 综合研究生级别评测 | - |
+| C-Eval | 中文综合能力评测，52 学科 | evalscope/ceval |
 
 详细文档见 [src/eval/README.md](src/eval/README.md)。
 
@@ -106,6 +110,17 @@ python bench.py eval --benchmark gpqa --vllm-host localhost --prompt-style cot
 | `--short-ratio` | 短文本比例 | 0.7 |
 | `--long-ratio` | 长文本比例 | 0.3 |
 | `--output`, `-o` | 结果输出目录 | ./results |
+
+### 评测命令参数
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--benchmark`, `-b` | 评测集名称 | gpqa |
+| `--source` | 数据集来源 (huggingface/modelscope) | huggingface |
+| `--samples`, `-n` | 最大样本数 | 全部 |
+| `--subject` | 按学科筛选 | 全部 |
+| `--prompt-style` | 提示风格 (zero_shot/few_shot/cot 等) | zero_shot |
+| `--hf-token` | HuggingFace token（门控数据集需要） | - |
 
 ## 压测模式
 
