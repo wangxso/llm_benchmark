@@ -61,7 +61,7 @@ def _render_active_tasks():
             with col3:
                 st.markdown("")
                 st.markdown("")
-                if st.button("⏹ Stop", key=f"stop_result_{tid}", width="stretch"):
+                if st.button("⏹ Stop", key=f"stop_result_{tid}"):
                     stop_task(tid)
                     st.rerun()
 
@@ -685,4 +685,4 @@ def show_autotune_detail(data: Dict, file_path: str = ""):
                 "Status": "✓" if h.get("error") is None else "✗",
             })
 
-        st.dataframe(history_data, width="stretch", hide_index=True)
+        st.dataframe(history_data, hide_index=True)

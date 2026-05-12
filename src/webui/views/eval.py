@@ -206,7 +206,7 @@ def render_eval_page():
     # Run button
     st.markdown("---")
 
-    if st.button("🚀 Run Evaluation", type="primary", width="stretch"):
+    if st.button("🚀 Run Evaluation", type="primary"):
         if not selected_provider:
             st.error("No provider selected")
             return

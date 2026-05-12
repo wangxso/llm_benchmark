@@ -209,7 +209,7 @@ def render_lb_page():
     # Run button
     st.markdown("---")
 
-    if st.button("🚀 Run Load Test", type="primary", width="stretch"):
+    if st.button("🚀 Run Load Test", type="primary"):
         if not selected_provider:
             st.error("No provider selected")
             return

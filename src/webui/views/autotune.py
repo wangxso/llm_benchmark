@@ -417,7 +417,7 @@ def display_search_space(space: SearchSpace):
             "Range": range_str
         })
 
-    st.dataframe(param_data, width="stretch", hide_index=True)
+    st.dataframe(param_data, hide_index=True)
 
     # Show constraints
     if space.constraints:
@@ -451,7 +451,6 @@ def render_run_section():
             "🚀 Start Tuning",
             type="primary",
             disabled=not model_path or is_running,
-            width="stretch"
         )
 
     # Run tuning
@@ -694,7 +693,7 @@ def render_results_section(all_sessions: List[Dict] = None):
                         "Max Len": cfg.get("max_model_len", ""),
                         "Status": "✓" if h.get("error") is None else "✗",
                     })
-                st.dataframe(table_data, width="stretch", hide_index=True)
+                st.dataframe(table_data, hide_index=True)
 
 
 def display_results_table(results: List[TuningResult]):
@@ -715,7 +714,7 @@ def display_results_table(results: List[TuningResult]):
             "Status": "✓" if r.error is None else "✗",
         })
 
-    st.dataframe(table_data, width="stretch", hide_index=True)
+    st.dataframe(table_data, hide_index=True)
 
 
 def download_json_report(results: List[TuningResult]):

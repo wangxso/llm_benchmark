@@ -212,7 +212,6 @@ def render_gpu_page():
 
         st.dataframe(
             proc_data,
-            width="stretch",
             hide_index=True,
         )
 
