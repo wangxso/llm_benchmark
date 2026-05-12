@@ -4,13 +4,14 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 from datasets import load_dataset
 import os
+import tempfile
 
 
 # ModelScope to HuggingFace dataset mapping
 MODELSCOPE_MAPPING = {
     "mmlu-pro": "iic/MMLU-Pro",
     "gpqa": "iic/GPQA",
-    "ceval": "iic/CEval",
+    "ceval": "evalscope/ceval",
     "mmlu": "iic/MMLU",
 }
 
@@ -77,25 +78,23 @@ class BaseBenchmark(ABC):
             dataset_path = self.hf_path
 
         try:
-            load_kwargs = {
-                "path": dataset_path,
-                "split": split,
-            }
-            if self.hf_name:
-                load_kwargs["name"] = self.hf_name
-            if token and source == "huggingface":
-                load_kwargs["token"] = token
-            if offline:
-                load_kwargs["download_mode"] = "force_redownload" if os.environ.get("FORCE_REDOWNLOAD") else "reuse_cache_if_exists"
+            if source == "modelscope":
+                ds = self._load_from_modelscope(dataset_path, split)
+            else:
+                load_kwargs = {
+                    "path": dataset_path,
+                    "split": split,
+                }
+                if self.hf_name:
+                    load_kwargs["name"] = self.hf_name
+                if token:
+                    load_kwargs["token"] = token
+                if offline:
+                    load_kwargs["download_mode"] = "force_redownload" if os.environ.get("FORCE_REDOWNLOAD") else "reuse_cache_if_exists"
 
-            ds = load_dataset(**load_kwargs)
+                ds = load_dataset(**load_kwargs)
         except Exception as e:
             error_msg = str(e)
-            if source == "modelscope":
-                # Fallback to HuggingFace if ModelScope fails
-                print(f"ModelScope load failed, trying HuggingFace: {e}")
-                return self.load(split=split, subject=subject, max_samples=max_samples,
-                                token=token, offline=offline, source="huggingface")
 
             if "gated dataset" in error_msg.lower() or "authenticated" in error_msg.lower():
                 raise RuntimeError(
@@ -115,6 +114,33 @@ class BaseBenchmark(ABC):
             items = items[:max_samples]
 
         return items
+
+    def _load_from_modelscope(self, dataset_path: str, split: str):
+        """Load dataset using ModelScope SDK (bypasses HuggingFace connectivity)"""
+        try:
+            from modelscope.hub.snapshot_download import snapshot_download
+        except ImportError:
+            raise RuntimeError(
+                "ModelScope SDK not installed. Install it with: pip install modelscope"
+            )
+
+        cache_dir = os.path.join(tempfile.gettempdir(), "modelscope_datasets", dataset_path.replace("/", "_"))
+        print(f"[ModelScope] Downloading {dataset_path} to {cache_dir}...")
+
+        local_dir = snapshot_download(
+            repo_id=dataset_path,
+            repo_type="dataset",
+            cache_dir=cache_dir,
+        )
+
+        load_kwargs = {
+            "path": local_dir,
+            "split": split,
+        }
+        if self.hf_name:
+            load_kwargs["name"] = self.hf_name
+
+        return load_dataset(**load_kwargs)
 
     @abstractmethod
     def _parse_row(self, row: Dict) -> Optional[Dict[str, Any]]:

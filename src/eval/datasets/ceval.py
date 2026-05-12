@@ -99,6 +99,7 @@ class CEvalBenchmark(BaseBenchmark):
         """
         from datasets import load_dataset
         import os
+        import tempfile
         from ..base import MODELSCOPE_MAPPING
 
         # Get token
@@ -113,24 +114,48 @@ class CEvalBenchmark(BaseBenchmark):
 
         # Determine dataset path based on source
         if source == "modelscope":
-            dataset_path = self.modelscope_path or MODELSCOPE_MAPPING.get("ceval", "iic/CEval")
+            dataset_path = self.modelscope_path or MODELSCOPE_MAPPING.get("ceval", "evalscope/ceval")
         else:
             dataset_path = self.hf_path
+
+        # Download from ModelScope first if needed
+        local_dir = None
+        if source == "modelscope":
+            try:
+                from modelscope.hub.snapshot_download import snapshot_download
+            except ImportError:
+                raise RuntimeError(
+                    "ModelScope SDK not installed. Install it with: pip install modelscope"
+                )
+            cache_dir = os.path.join(tempfile.gettempdir(), "modelscope_datasets", dataset_path.replace("/", "_"))
+            print(f"[ModelScope] Downloading {dataset_path} to {cache_dir}...")
+            local_dir = snapshot_download(
+                repo_id=dataset_path,
+                repo_type="dataset",
+                cache_dir=cache_dir,
+            )
 
         items = []
         subjects_to_load = [subject] if subject else CEVAL_SUBJECTS
 
         for subj in subjects_to_load:
             try:
-                load_kwargs = {
-                    "path": dataset_path,
-                    "name": subj,
-                    "split": split,
-                }
-                if token and source != "modelscope":
-                    load_kwargs["token"] = token
-                if offline:
-                    load_kwargs["download_mode"] = "reuse_cache_if_exists"
+                if local_dir:
+                    load_kwargs = {
+                        "path": local_dir,
+                        "name": subj,
+                        "split": split,
+                    }
+                else:
+                    load_kwargs = {
+                        "path": dataset_path,
+                        "name": subj,
+                        "split": split,
+                    }
+                    if token:
+                        load_kwargs["token"] = token
+                    if offline:
+                        load_kwargs["download_mode"] = "reuse_cache_if_exists"
 
                 ds = load_dataset(**load_kwargs)
 
@@ -142,26 +167,7 @@ class CEvalBenchmark(BaseBenchmark):
                             return items
 
             except Exception as e:
-                # If ModelScope fails, fallback to HuggingFace
-                if source == "modelscope":
-                    print(f"ModelScope load failed for {subj}, trying HuggingFace: {e}")
-                    try:
-                        fallback_kwargs = {
-                            "path": self.hf_path,
-                            "name": subj,
-                            "split": split,
-                        }
-                        if token:
-                            fallback_kwargs["token"] = token
-                        ds = load_dataset(**fallback_kwargs)
-                        for row in ds:
-                            item = self._parse_row(row, subj)
-                            if item:
-                                items.append(item)
-                                if max_samples and len(items) >= max_samples:
-                                    return items
-                    except Exception:
-                        pass
+                print(f"Failed to load CEval subject {subj}: {e}")
                 continue
 
         return items
