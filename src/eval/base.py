@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
-from datasets import load_dataset
+from datasets import load_dataset, Dataset
 import os
 import tempfile
 
@@ -136,23 +136,74 @@ class BaseBenchmark(ABC):
             cache_dir=cache_dir,
         )
 
-        # Find the parquet file for the requested split
+        # Bypass dataset_infos.json which may have incompatible feature definitions.
+        # Use pandas to read data files directly, then convert to Dataset.
+        import pandas as pd
+
+        # File extensions that contain actual data (not metadata like dataset_info.json)
+        _DATA_EXTS = (".csv", ".parquet", ".jsonl")
+
+        def _find_data_files(base_dir, pattern=None):
+            """Find data files in base_dir, optionally filtered by filename pattern."""
+            files = []
+            for f in sorted(os.listdir(base_dir)):
+                fp = os.path.join(base_dir, f)
+                if os.path.isfile(fp) and f.endswith(_DATA_EXTS):
+                    if pattern is None or f.startswith(pattern):
+                        files.append(fp)
+            return files
+
+        def _load_files(files):
+            """Load data files with pandas and return a Dataset."""
+            if not files:
+                return None
+            ext = os.path.splitext(files[0])[1]
+            if ext == ".parquet":
+                dfs = [pd.read_parquet(f) for f in files]
+            elif ext == ".jsonl":
+                dfs = [pd.read_json(f, lines=True) for f in files]
+            elif ext == ".csv":
+                dfs = [pd.read_csv(f, dtype=str) for f in files]
+            else:
+                return None
+            df = pd.concat(dfs, ignore_index=True)
+            return Dataset.from_pandas(df)
+
+        # 1) Try split-specific files in data/ or root
         data_dir = os.path.join(local_dir, "data")
         if not os.path.isdir(data_dir):
             data_dir = local_dir
-        split_file = None
-        for fname in os.listdir(data_dir):
-            if fname.startswith(split) and fname.endswith(".parquet"):
-                split_file = os.path.join(data_dir, fname)
-                break
-        if not split_file:
-            # Fallback: use load_dataset with data_files
-            load_kwargs = {"data_dir": data_dir, "split": split}
-            if self.hf_name:
-                load_kwargs["name"] = self.hf_name
-            return load_dataset(**load_kwargs)
+        result = _load_files(_find_data_files(data_dir, pattern=split))
+        if result is not None:
+            return result
 
-        return load_dataset("parquet", data_files=split_file, split="train")
+        # 2) Try any data files in data/ or root
+        result = _load_files(_find_data_files(data_dir))
+        if result is not None:
+            return result
+
+        # 3) Recursive search: look in subdirectories (e.g. MMLU-Redux subject dirs)
+        # If split matches a subdirectory name, load from that directory only.
+        # Otherwise, load all matching data files from all subdirectories.
+        all_files = []
+        for entry in sorted(os.listdir(local_dir)):
+            sub = os.path.join(local_dir, entry)
+            if os.path.isdir(sub) and not entry.startswith("."):
+                if entry == split:
+                    all_files.extend(_find_data_files(sub))
+                    break
+                else:
+                    all_files.extend(_find_data_files(sub, pattern=split))
+        if all_files:
+            result = _load_files(all_files)
+            if result is not None:
+                return result
+
+        # 4) Last resort: let datasets library figure it out
+        load_kwargs = {"path": local_dir, "split": split}
+        if self.hf_name:
+            load_kwargs["name"] = self.hf_name
+        return load_dataset(**load_kwargs)
 
     @abstractmethod
     def _parse_row(self, row: Dict) -> Optional[Dict[str, Any]]:
