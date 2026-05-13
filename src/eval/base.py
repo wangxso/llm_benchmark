@@ -9,8 +9,10 @@ import tempfile
 
 # ModelScope to HuggingFace dataset mapping
 MODELSCOPE_MAPPING = {
-    "mmlu-pro": "iic/MMLU-Pro",
-    "gpqa": "iic/GPQA",
+    "mmlu-pro": "modelscope/MMLU-Pro",
+    "mmluredux": "AI-ModelScope/mmlu-redux",
+    "gpqa": "modelscope/gpqa",
+    "supergpqa": "m-a-p/SuperGPQA",
     "ceval": "evalscope/ceval",
     "mmlu": "iic/MMLU",
 }
