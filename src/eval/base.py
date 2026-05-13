@@ -9,12 +9,13 @@ import tempfile
 
 # ModelScope to HuggingFace dataset mapping
 MODELSCOPE_MAPPING = {
-    "mmlu-pro": "modelscope/MMLU-Pro",
+    # Keys must match: self.name.lower().replace("-", "").replace("_", "")
+    "mmlupro": "modelscope/MMLU-Pro",
     "mmluredux": "AI-ModelScope/mmlu-redux",
     "gpqa": "modelscope/gpqa",
     "supergpqa": "m-a-p/SuperGPQA",
     "ceval": "evalscope/ceval",
-    "mmlu": "iic/MMLU",
+    "mmlu": "modelscope/MMLU",
 }
 
 
@@ -135,14 +136,23 @@ class BaseBenchmark(ABC):
             cache_dir=cache_dir,
         )
 
-        load_kwargs = {
-            "path": local_dir,
-            "split": split,
-        }
-        if self.hf_name:
-            load_kwargs["name"] = self.hf_name
+        # Find the parquet file for the requested split
+        data_dir = os.path.join(local_dir, "data")
+        if not os.path.isdir(data_dir):
+            data_dir = local_dir
+        split_file = None
+        for fname in os.listdir(data_dir):
+            if fname.startswith(split) and fname.endswith(".parquet"):
+                split_file = os.path.join(data_dir, fname)
+                break
+        if not split_file:
+            # Fallback: use load_dataset with data_files
+            load_kwargs = {"data_dir": data_dir, "split": split}
+            if self.hf_name:
+                load_kwargs["name"] = self.hf_name
+            return load_dataset(**load_kwargs)
 
-        return load_dataset(**load_kwargs)
+        return load_dataset("parquet", data_files=split_file, split="train")
 
     @abstractmethod
     def _parse_row(self, row: Dict) -> Optional[Dict[str, Any]]:
