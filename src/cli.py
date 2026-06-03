@@ -1,5 +1,9 @@
 import click
+import csv
+import re
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 from .config import load_config
@@ -445,7 +449,10 @@ def check_cmd(**kwargs):
 @click.option("--vllm-port", type=int, help="vLLM port")
 @click.option("--model", type=str, help="Model name to use in requests")
 def run(**kwargs):
-    """Run benchmark test"""
+    """Run custom load test (fixed/step/burst/streaming/long_context)
+
+    For simple vLLM throughput benchmarks, use `bench.py bench` instead.
+    """
     config = load_config(kwargs.get("config"))
 
     config = merge_cli_config(config, kwargs)
@@ -524,6 +531,264 @@ def run(**kwargs):
     click.echo(f"[Success] Results saved to: {output_path}")
 
     print_summary(report)
+
+
+DEFAULT_CONCURRENCIES = [1, 2, 4, 8, 16, 32]
+FAST_NUM_PROMPTS = {
+    1: 50, 2: 100, 4: 200, 8: 250, 16: 400, 32: 500, 64: 1000,
+}
+ULTRAFAST_NUM_PROMPTS = {
+    1: 20, 2: 30, 4: 50, 8: 100, 16: 200, 32: 300, 64: 500,
+}
+DEFAULT_NUM_PROMPTS = 500
+METRIC_PATTERNS = {
+    "successful_requests": re.compile(r"Successful requests:\s+(\d+)", re.I),
+    "request_throughput": re.compile(r"Request throughput \(req/s\):\s+([0-9.]+)", re.I),
+    "output_throughput": re.compile(r"Output token throughput \(tok/s\):\s+([0-9.]+)", re.I),
+    "ttft_p50": re.compile(r"P50 TTFT \(ms\):\s+([0-9.]+)", re.I),
+    "ttft_p95": re.compile(r"P95 TTFT \(ms\):\s+([0-9.]+)", re.I),
+}
+
+
+def _get_num_prompts(concurrency: int, num_prompts: int | None, quick: bool, fast: bool) -> int:
+    if num_prompts is not None:
+        return num_prompts
+    if fast:
+        return ULTRAFAST_NUM_PROMPTS.get(concurrency, DEFAULT_NUM_PROMPTS)
+    if quick:
+        return FAST_NUM_PROMPTS.get(concurrency, DEFAULT_NUM_PROMPTS)
+    return DEFAULT_NUM_PROMPTS
+
+
+def _run_vllm_bench(command: list[str], timeout: int | None = None) -> tuple[int, str]:
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1, universal_newlines=True,
+    )
+    output_lines: list[str] = []
+    assert process.stdout is not None
+    try:
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            output_lines.append(line)
+    except KeyboardInterrupt:
+        process.terminate()
+        process.wait(timeout=10)
+        raise
+    try:
+        return_code = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        return -1, "".join(output_lines) + "\n[TIMEOUT] Process exceeded time limit."
+    return return_code, "".join(output_lines)
+
+
+def _parse_vllm_metrics(output: str, num_prompts: int) -> dict[str, float | int]:
+    metrics: dict[str, float | int] = {}
+    for key, pattern in METRIC_PATTERNS.items():
+        match = pattern.search(output)
+        metrics[key] = float(match.group(1)) if match else 0.0
+    completed = int(metrics.get("successful_requests", 0))
+    metrics["success_rate"] = round(completed / num_prompts * 100.0, 2) if num_prompts else 0.0
+    return metrics
+
+
+def _load_bench_results(csv_path: Path) -> dict[int, dict]:
+    if not csv_path.exists():
+        return {}
+    existing: dict[int, dict] = {}
+    with csv_path.open("r", newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            try:
+                cnc = int(row.get("concurrency", "0"))
+            except ValueError:
+                continue
+            existing[cnc] = {
+                "concurrency": cnc,
+                "successful_requests": int(float(row.get("successful_requests", "0") or 0)),
+                "success_rate": float(row.get("success_rate", "0") or 0.0),
+                "qps": float(row.get("qps", "0") or 0.0),
+                "decode_throughput": float(row.get("decode_throughput", "0") or 0.0),
+                "ttft_p50": float(row.get("ttft_p50", "0") or 0.0),
+                "ttft_p95": float(row.get("ttft_p95", "0") or 0.0),
+                "status": row.get("status", "unknown"),
+                "error": row.get("error", ""),
+            }
+    return existing
+
+
+def _save_bench_results(results: list[dict], csv_path: Path) -> None:
+    headers = [
+        "concurrency", "successful_requests", "success_rate", "qps",
+        "decode_throughput", "ttft_p50", "ttft_p95", "status", "error",
+    ]
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(results)
+    click.echo(f"Results saved to {csv_path}")
+
+
+def _print_bench_summary(results: list[dict]) -> None:
+    click.echo("\n" + "=" * 80)
+    click.echo("SUMMARY")
+    click.echo("=" * 80)
+    header = f"{'CNC':>4}  {'REQ':>5}  {'QPS':>8}  {'TOK/S':>10}  {'TTFT P50':>10}  {'TTFT P95':>10}  {'STATUS':>8}"
+    click.echo(header)
+    click.echo("-" * 80)
+    for r in results:
+        status = r.get("status", "unknown")
+        marker = " *" if status != "ok" else ""
+        click.echo(
+            f"{r['concurrency']:>4}  "
+            f"{r['successful_requests']:>5}  "
+            f"{r['qps']:>8.2f}  "
+            f"{r['decode_throughput']:>10.2f}  "
+            f"{r['ttft_p50']:>10.2f}  "
+            f"{r['ttft_p95']:>10.2f}  "
+            f"{status:>8}{marker}"
+        )
+    click.echo("=" * 80)
+    click.echo("* = non-OK status")
+
+
+@cli.command("bench")
+@click.option("--concurrency", "-c", type=int, multiple=True, default=(1, 2, 4, 8, 16, 32),
+              help="Concurrency levels to test (default: 1 2 4 8 16 32).")
+@click.option("--num-prompts", type=int, default=None,
+              help="Force the same number of prompts for all concurrency levels.")
+@click.option("--quick", is_flag=True,
+              help="Use fewer prompts for low concurrency levels to speed up.")
+@click.option("--fast", is_flag=True,
+              help="Use minimal prompts for a quick validation run (faster than --quick).")
+@click.option("--output-csv", type=str, default=None,
+              help="CSV file to save benchmark results.")
+@click.option("--resume", is_flag=True,
+              help="Resume from existing CSV and skip completed concurrency levels.")
+@click.option("--force", is_flag=True,
+              help="Force rerun all concurrency levels even if results exist.")
+@click.option("--timeout", type=int, default=None,
+              help="Timeout in seconds for each concurrency run.")
+@click.option("--input-len", type=int, default=2048,
+              help="Random input token length (default: 2048).")
+@click.option("--output-len", type=int, default=512,
+              help="Random output token length (default: 512).")
+@click.option("--vllm-host", type=str, default="127.0.0.1",
+              help="vLLM server host (default: 127.0.0.1).")
+@click.option("--vllm-port", type=int, default=25000,
+              help="vLLM server port (default: 25000).")
+@click.option("--model", type=str, default="Qwen3-30B",
+              help="Model name for the request (default: Qwen3-30B).")
+@click.option("--tokenizer", type=str, default=None,
+              help="Tokenizer path (default: same as model).")
+@click.option("--endpoint", type=str, default="/v1/chat/completions",
+              help="API endpoint path (default: /v1/chat/completions).")
+@click.option("--dataset-name", type=str, default="random",
+              help="Dataset name for vllm bench (default: random).")
+def bench_cmd(**kwargs):
+    """Run vLLM serve benchmarks across multiple concurrency levels.
+
+    Wraps `vllm bench serve` to test throughput and latency at different
+    concurrency levels, producing a CSV summary table.
+
+    \b
+    Examples:
+        bench.py bench --vllm-host localhost --model Qwen3-30B
+        bench.py bench --quick -c 1 -c 4 -c 8 -c 16
+        bench.py bench --fast --timeout 120
+        bench.py bench --resume
+        bench.py bench --input-len 4096 --output-len 1024
+    """
+    concurrencies = sorted(set(kwargs["concurrency"]))
+    output_csv = Path(kwargs["output_csv"]) if kwargs["output_csv"] else (
+        Path(__file__).resolve().parent.parent / "bench_results.csv"
+    )
+    existing_results: dict[int, dict] = {}
+    if kwargs["resume"]:
+        existing_results = _load_bench_results(output_csv)
+        if existing_results:
+            click.echo(f"Loaded {len(existing_results)} existing result(s) from {output_csv}")
+
+    base_url = f"http://{kwargs['vllm_host']}:{kwargs['vllm_port']}"
+    tokenizer = kwargs["tokenizer"] or ""
+
+    results: list[dict] = []
+    total = len(concurrencies)
+
+    for index, concurrency in enumerate(concurrencies, start=1):
+        if kwargs["resume"] and not kwargs["force"]:
+            existing = existing_results.get(concurrency)
+            if existing and existing.get("status") == "ok":
+                click.echo(f"[{index}/{total}] concurrency={concurrency} already completed, skipping")
+                results.append(existing)
+                continue
+
+        num_prompts = _get_num_prompts(concurrency, kwargs["num_prompts"], kwargs["quick"], kwargs["fast"])
+
+        command = [
+            "vllm", "bench", "serve",
+            "--backend", "openai-chat",
+            "--base-url", base_url,
+            "--endpoint", kwargs["endpoint"],
+            "--model", kwargs["model"],
+            "--dataset-name", kwargs["dataset_name"],
+            "--random-input-len", str(kwargs["input_len"]),
+            "--random-output-len", str(kwargs["output_len"]),
+            "--max-concurrency", str(concurrency),
+            "--num-prompts", str(num_prompts),
+        ]
+        if tokenizer:
+            command.extend(["--tokenizer", tokenizer])
+
+        header = f"[{index}/{total}] concurrency={concurrency} prompts={num_prompts}"
+        click.echo("=" * 80)
+        click.echo(header)
+        click.echo("=" * 80)
+
+        start_time = time.time()
+        return_code, output = _run_vllm_bench(command, timeout=kwargs["timeout"])
+        elapsed = time.time() - start_time
+        click.echo(f"Finished {header} in {elapsed:.1f}s\n")
+
+        if return_code != 0:
+            results.append({
+                "concurrency": concurrency,
+                "successful_requests": 0,
+                "success_rate": 0.0,
+                "qps": 0.0,
+                "decode_throughput": 0.0,
+                "ttft_p50": 0.0,
+                "ttft_p95": 0.0,
+                "status": "error",
+                "error": output.strip().replace("\n", " | "),
+            })
+        else:
+            metrics = _parse_vllm_metrics(output, num_prompts)
+            results.append({
+                "concurrency": concurrency,
+                "successful_requests": int(metrics["successful_requests"]),
+                "success_rate": metrics["success_rate"],
+                "qps": round(metrics["request_throughput"], 2),
+                "decode_throughput": round(metrics["output_throughput"], 2),
+                "ttft_p50": round(metrics["ttft_p50"], 2),
+                "ttft_p95": round(metrics["ttft_p95"], 2),
+                "status": "ok",
+                "error": "",
+            })
+
+    if kwargs["resume"] and existing_results:
+        for cnc, row in existing_results.items():
+            if cnc not in concurrencies and row.get("status") == "ok":
+                results.append(row)
+
+    results.sort(key=lambda item: int(item["concurrency"]))
+    _save_bench_results(results, output_csv)
+    _print_bench_summary(results)
 
 
 @cli.command()

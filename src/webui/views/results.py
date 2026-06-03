@@ -311,22 +311,40 @@ def show_eval_detail(data: Dict):
             if subjects:
                 st.markdown("### 📈 Accuracy by Subject")
 
-                fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
                 names = list(subjects.keys())
                 accuracies = [s['accuracy'] * 100 for s in subjects.values()]
+                n = len(names)
 
-                colors = ['#4ecdc4' if acc >= 50 else '#ff6b6b' for acc in accuracies]
-                bars = ax.bar(range(len(names)), accuracies, color=colors)
-                ax.set_xticks(range(len(names)))
-                ax.set_xticklabels(names, rotation=45, ha='right')
-                ax.set_ylabel('Accuracy (%)')
-                ax.set_ylim(0, 100)
-                ax.axhline(y=50, color='gray', linestyle='--', alpha=0.5)
-
-                # Add value labels on bars
-                for bar, acc in zip(bars, accuracies):
-                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
-                           f'{acc:.1f}%', ha='center', va='bottom', fontsize=9)
+                if n <= 15:
+                    # Vertical bars for few subjects
+                    fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
+                    colors = ['#4ecdc4' if acc >= 50 else '#ff6b6b' for acc in accuracies]
+                    bars = ax.bar(range(n), accuracies, color=colors)
+                    ax.set_xticks(range(n))
+                    ax.set_xticklabels(names, rotation=45, ha='right', fontsize=9)
+                    ax.set_ylabel('Accuracy (%)')
+                    ax.set_ylim(0, 100)
+                    ax.axhline(y=50, color='gray', linestyle='--', alpha=0.5)
+                    for bar, acc in zip(bars, accuracies):
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                               f'{acc:.1f}%', ha='center', va='bottom', fontsize=9)
+                else:
+                    # Horizontal bars for many subjects
+                    fig_height = max(4, n * 0.35)
+                    fig, ax = plt.subplots(figsize=(8, fig_height), dpi=100)
+                    colors = ['#4ecdc4' if acc >= 50 else '#ff6b6b' for acc in accuracies]
+                    y_pos = range(n)
+                    bars = ax.barh(y_pos, accuracies, color=colors)
+                    ax.set_yticks(y_pos)
+                    ax.set_yticklabels(names, fontsize=9)
+                    ax.set_xlabel('Accuracy (%)')
+                    ax.set_xlim(0, 100)
+                    ax.axvline(x=50, color='gray', linestyle='--', alpha=0.5)
+                    ax.invert_yaxis()
+                    for bar, acc in zip(bars, accuracies):
+                        ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height()/2,
+                               f'{acc:.1f}%', ha='left', va='center', fontsize=9)
+                    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:.0f}%'))
 
                 plt.tight_layout()
                 st.pyplot(fig, clear_figure=True)
@@ -371,11 +389,13 @@ def show_eval_detail(data: Dict):
         error_details = data.get("error_details", {})
 
         for err_type, count in sorted(error_types.items(), key=lambda x: -x[1]):
-            with st.expander(f"**{err_type}** ({count} errors)", expanded=False):
+            with st.container():
+                st.markdown(f"**{err_type}** ({count} errors)")
                 if err_type in error_details:
                     for detail, detail_count in sorted(error_details[err_type].items(),
                                                         key=lambda x: -x[1])[:5]:
                         st.write(f"- [{detail_count}x] {detail[:100]}...")
+                st.markdown("")
 
     # Subject details table
     if subjects:

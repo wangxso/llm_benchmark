@@ -5,6 +5,7 @@
 ## 功能特性
 
 - **多模式压测**: 固定并发、阶梯升压、突发洪峰、长上下文、流式响应
+- **vLLM Serve 基准**: 基于 `vllm bench serve` 的多并发级别基准测试，输出 CSV 汇总表
 - **基准评测**: 支持 GPQA、MMLU-Pro、MMLU-Redux、SuperGPQA 等标准评测集
 - **Auto-Tuning**: 基于 Bayesian Optimization 的 vLLM 参数自动调优
 - **数据集管理**: 支持导入（JSON/JSONL/CSV）和泛化生成两种模式，可指定文本字段如 `instruction`
@@ -53,6 +54,30 @@ python bench.py run --vllm-host localhost --concurrency 50 --stream
 
 # 使用配置文件导入 JSON 数据集，并读取 instruction 字段
 python bench.py run --config config/default.yaml --vllm-host localhost --concurrency 50 --stream
+```
+
+### 3. vLLM Serve 基准测试
+
+基于 `vllm bench serve` 的多并发级别基准测试，自动遍历不同并发数并输出汇总表：
+
+```bash
+# 默认测试并发 1,2,4,8,16,32，每个 500 条请求
+python bench.py bench --vllm-host localhost --model Qwen3-30B
+
+# 快速模式：低并发使用更少请求
+python bench.py bench --quick -c 1 -c 4 -c 8 -c 16
+
+# 极速验证 + 超时
+python bench.py bench --fast --timeout 120
+
+# 从上次中断处恢复
+python bench.py bench --resume
+
+# 自定义输入/输出长度
+python bench.py bench --input-len 4096 --output-len 1024
+
+# 指定 tokenizer 路径
+python bench.py bench --model Qwen3-30B --tokenizer /workspace/models/Qwen3-30B-A3B
 ```
 
 ## 基准评测
@@ -121,6 +146,31 @@ python bench.py eval --benchmark ceval --vllm-host localhost --source modelscope
 | `--subject` | 按学科筛选 | 全部 |
 | `--prompt-style` | 提示风格 (zero_shot/few_shot/cot 等) | zero_shot |
 | `--hf-token` | HuggingFace token（门控数据集需要） | - |
+
+### Bench 命令参数
+
+基于 `vllm bench serve`，测试不同并发级别下的吞吐量和时延。
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--concurrency`, `-c` | 并发级别列表 | 1 2 4 8 16 32 |
+| `--num-prompts` | 所有并发级别使用相同请求数 | 按并发动态分配 |
+| `--quick` | 低并发使用较少请求（加速测试） | false |
+| `--fast` | 极速验证模式（比 --quick 更快） | false |
+| `--output-csv` | 结果 CSV 文件路径 | bench_results.csv |
+| `--resume` | 从已有 CSV 恢复，跳过已完成的并发级别 | false |
+| `--force` | 强制重新运行所有并发级别 | false |
+| `--timeout` | 每轮运行超时（秒） | 无超时 |
+| `--input-len` | 随机输入 token 长度 | 2048 |
+| `--output-len` | 随机输出 token 长度 | 512 |
+| `--vllm-host` | vLLM 服务器地址 | 127.0.0.1 |
+| `--vllm-port` | vLLM 服务器端口 | 25000 |
+| `--model` | 模型名称 | Qwen3-30B |
+| `--tokenizer` | tokenizer 路径（默认同模型） | - |
+| `--endpoint` | API 端点路径 | /v1/chat/completions |
+| `--dataset-name` | vllm bench 数据集名称 | random |
+
+**输出指标**：QPS、token/s 吞吐、TTFT P50/P95、成功率，结果保存为 CSV 文件。
 
 ## 压测模式
 

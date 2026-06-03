@@ -71,7 +71,7 @@ class OpenAIClient:
         """Send a streaming request"""
         session = await self._get_session()
 
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url}/v1/chat/completions"
         request["stream"] = True
 
         try:
