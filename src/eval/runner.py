@@ -40,6 +40,7 @@ class EvalRunner:
         api_key: Optional[str] = None,
         api_type: str = "openai",
         dataset_source: str = "huggingface",  # "huggingface" or "modelscope"
+        max_tokens: int = 1024,
     ):
         self.benchmark = benchmark
         self.host = host
@@ -53,6 +54,7 @@ class EvalRunner:
         self.api_key = api_key
         self.api_type = api_type.lower()
         self.dataset_source = dataset_source
+        self.max_tokens = max_tokens
 
         # Determine base URL
         if api_base_url:
@@ -81,7 +83,7 @@ class EvalRunner:
 
         payload = {
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 4000,  # Enough for CoT reasoning
+            "max_tokens": self.max_tokens,
             "temperature": 0.0,
         }
         if self.model:
@@ -133,7 +135,7 @@ class EvalRunner:
 
         payload = {
             "model": self.model or "claude-3-haiku-20240307",
-            "max_tokens": 4000,  # Enough for CoT reasoning
+            "max_tokens": self.max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         }
 

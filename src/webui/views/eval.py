@@ -39,6 +39,7 @@ def _run_eval_background(task_id: str, stop_event, **kwargs):
             api_key=kwargs["api_key"],
             api_type=kwargs["api_type"],
             dataset_source=kwargs["dataset_source"],
+            max_tokens=kwargs.get("max_tokens", 1024),
         )
 
         update_progress(task_id, 0.15, "Running evaluation...")
@@ -141,6 +142,8 @@ def render_eval_page():
             offline = st.checkbox("Offline Mode", value=False,
                                    help="Use cached datasets only", key="eval_offline")
             output_dir = st.text_input("Output Directory", value="./results", key="eval_output")
+            max_tokens = st.number_input("Max Output Tokens", min_value=1, value=1024,
+                                          help="Max tokens to generate per request", key="eval_max_tokens")
 
     # Benchmark Selection
     st.markdown("#### Benchmark Selection")
@@ -237,6 +240,7 @@ def render_eval_page():
             prompt_style=prompt_style,
             output_dir=output_dir,
             dataset_source=dataset_source,
+            max_tokens=max_tokens,
         )
         st.success(f"✅ Evaluation started in background: **{label}**")
         st.caption("Go to **Results** page to monitor progress and stop if needed.")

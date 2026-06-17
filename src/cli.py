@@ -45,6 +45,7 @@ def cli():
 @click.option("--api-key", type=str, help="API key for remote API")
 @click.option("--api-type", type=click.Choice(["openai", "anthropic"]), default="openai",
               help="API type: openai (default) or anthropic")
+@click.option("--max-tokens", type=int, default=1024, help="Max output tokens per request")
 def eval_cmd(**kwargs):
     """Run benchmark evaluation (GPQA, MMLU-Pro, etc.)
 
@@ -121,6 +122,7 @@ def eval_cmd(**kwargs):
         api_key=kwargs.get("api_key"),
         api_type=kwargs.get("api_type", "openai"),
         dataset_source=kwargs.get("source", "huggingface"),
+        max_tokens=kwargs.get("max_tokens", 1024),
     )
 
     report = runner.run(
