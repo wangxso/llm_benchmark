@@ -40,6 +40,7 @@ def _run_eval_background(task_id: str, stop_event, **kwargs):
             api_type=kwargs["api_type"],
             dataset_source=kwargs["dataset_source"],
             max_tokens=kwargs.get("max_tokens", 1024),
+            max_retries=kwargs.get("max_retries", 3),
         )
 
         update_progress(task_id, 0.15, "Running evaluation...")

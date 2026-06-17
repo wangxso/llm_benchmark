@@ -41,6 +41,7 @@ class EvalRunner:
         api_type: str = "openai",
         dataset_source: str = "huggingface",  # "huggingface" or "modelscope"
         max_tokens: int = 1024,
+        max_retries: int = 3,
     ):
         self.benchmark = benchmark
         self.host = host
@@ -55,6 +56,7 @@ class EvalRunner:
         self.api_type = api_type.lower()
         self.dataset_source = dataset_source
         self.max_tokens = max_tokens
+        self.max_retries = max_retries
 
         # Determine base URL
         if api_base_url:
@@ -243,7 +245,18 @@ class EvalRunner:
                 category=item.get("subject", ""),
             )
 
-            result = await self._send_request(session, prompt)
+            result = None
+            for attempt in range(1 + self.max_retries):
+                result = await self._send_request(session, prompt)
+                if result["success"]:
+                    break
+                # Retry on timeout or connection error
+                err = result.get("error", "")
+                if attempt < self.max_retries and ("Timeout" in err or "Connection" in err):
+                    wait = 2 ** attempt  # 1s, 2s, 4s
+                    await asyncio.sleep(wait)
+                    continue
+                break
 
             if result["success"]:
                 num_options = len(item.get("choices", []))
